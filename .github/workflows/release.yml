@@ -1,0 +1,152 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+            python-version: '3.11'
+          - os: macos-15
+            platform: macos-x64
+            python-version: '3.11'
+          - os: ubuntu-22.04
+            platform: linux-x64
+            python-version: '3.11'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller stamina-biome.spec
+
+      - name: Verify build
+        run: |
+          ./dist/stamina-biome/stamina-biome --help
+          ./dist/stamina-biome/stamina-biome list
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create tarball
+        run: |
+          cd dist
+          # Rename to include version and platform
+          mv stamina-biome stamina-biome-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          tar -czvf stamina-biome-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.gz \
+            stamina-biome-${{ steps.version.outputs.version }}-${{ matrix.platform }}/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stamina-biome-${{ steps.version.outputs.version }}-${{ matrix.platform }}
+          path: dist/stamina-biome-${{ steps.version.outputs.version }}-${{ matrix.platform }}.tar.gz
+          retention-days: 5
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: |
+          ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: STAMINA-BIOME ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+          body: |
+            ## STAMINA-BIOME ${{ steps.version.outputs.version }}
+
+            Standardised, Technology-Agnostic Framework for Microbiome Investigation and Analysis - CLI release.
+
+            ### Installation
+
+            1. Download the appropriate archive for your platform:
+               - **macOS (Apple Silicon M1/M2/M3)**: `stamina-biome-${{ steps.version.outputs.version }}-macos-arm64.tar.gz`
+               - **macOS (Intel)**: `stamina-biome-${{ steps.version.outputs.version }}-macos-x64.tar.gz`
+               - **Linux (x64)**: `stamina-biome-${{ steps.version.outputs.version }}-linux-x64.tar.gz`
+
+            2. Extract and run:
+               ```bash
+               tar -xzf stamina-biome-${{ steps.version.outputs.version }}-<platform>.tar.gz
+               cd stamina-biome-${{ steps.version.outputs.version }}-<platform>
+               ./stamina-biome --help
+               ```
+
+            3. Optionally add to your PATH:
+               ```bash
+               export PATH="$PATH:$(pwd)"
+               ```
+
+            ### Quick Start
+
+            ```bash
+            # List available pipelines
+            ./stamina-biome list
+
+            # Run a pipeline
+            ./stamina-biome run -p sr_amp -i /path/to/reads/
+
+            # Dry-run to preview configuration
+            ./stamina-biome run -p lr_amp -i /path/to/reads/ --dry-run
+            ```
+
+            ### Requirements
+
+            - Docker (for running pipelines in containers)
+            - Reference databases (Kraken2, Emu, etc. as needed by your pipeline)

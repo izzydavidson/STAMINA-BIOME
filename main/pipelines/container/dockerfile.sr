@@ -1,0 +1,101 @@
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    make \
+    g++ \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    perl \
+    libxml-simple-perl \
+    libjson-perl \
+    liblist-moreutils-perl \
+  && rm -rf /var/lib/apt/lists/*
+
+# Kraken2
+RUN git clone --depth 1 --branch "v2.17.1" https://github.com/DerrickWood/kraken2.git /tmp/kraken2 \
+  && cd /tmp/kraken2 \
+  && ./install_kraken2.sh /opt/kraken2
+
+# Bracken (install_bracken.sh compiles src/kmer2read_distr via `make` — without this,
+# bracken-build silently no-ops: it falls back to a PATH-search branch with an unquoted
+# `[ -f $(command -v generate_kmer_distribution.py) ]` that evaluates true even when not
+# found, running `python -i <kraken-report>` instead and exiting 0 with no output file)
+RUN git clone --depth 1 --branch "v3.1" https://github.com/jenniferlu717/Bracken.git /opt/bracken \
+ && cd /opt/bracken && bash install_bracken.sh
+
+# Krona
+RUN git clone --depth 1 --branch "v2.8.1" https://github.com/marbl/Krona.git /opt/krona-src \
+ && cd /opt/krona-src/KronaTools \
+ && ./install.pl --prefix /opt/krona
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    coreutils \
+    findutils \
+    gzip \
+    pigz \
+    tar \
+    unzip \
+    curl \
+    wget \
+    git \
+    jq \
+    python3 \
+    python3-pip \
+    perl \
+    libxml-simple-perl \
+    libjson-perl \
+    liblist-moreutils-perl \
+    samtools \
+    minimap2 \
+    fastp \
+    docker.io \
+    libgomp1 \
+    default-jre \
+    fastqc \
+  && rm -rf /var/lib/apt/lists/* \
+  && pip3 install --no-cache-dir pandas matplotlib numpy "multiqc==1.25.1"
+
+COPY --from=builder /opt/kraken2 /opt/kraken2
+COPY --from=builder /opt/bracken /opt/bracken
+COPY --from=builder /opt/krona /opt/krona
+
+# bracken-build hardcodes the unversioned `python` command; this image only ships
+# python3, so without this symlink bracken-build fails with "python: command not found".
+RUN install -d /usr/local/bin \
+  && ln -sf /opt/kraken2/kraken2 /usr/local/bin/kraken2 \
+  && ln -sf /opt/kraken2/kraken2-build /usr/local/bin/kraken2-build \
+  && ln -sf /opt/kraken2/kraken2-inspect /usr/local/bin/kraken2-inspect \
+  && ln -sf /opt/bracken/bracken /usr/local/bin/bracken \
+  && ln -sf /opt/bracken/bracken-build /usr/local/bin/bracken-build \
+  && ln -sf /usr/bin/python3 /usr/local/bin/python \
+  && ln -sf /opt/krona/bin/ktImportText /usr/local/bin/ktImportText \
+  && ln -sf /opt/krona/bin/ktImportTaxonomy /usr/local/bin/ktImportTaxonomy \
+  && ln -sf /opt/krona/bin/ktImportBLAST /usr/local/bin/ktImportBLAST \
+  && ln -sf /opt/krona/bin/ktImportXML /usr/local/bin/ktImportXML
+
+# Install Python packages for sr pipelines
+RUN python3 -m pip install --no-cache-dir \
+    pandas \
+    matplotlib \
+    numpy \
+    "multiqc==1.25.1" \
+    kaleido \
+    tqdm \
+    pysam
+
+WORKDIR /work

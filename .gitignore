@@ -1,0 +1,83 @@
+# AI assistant files
+.claude/
+claude.md
+CLAUDE.md
+
+# R session files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Pipeline outputs and results
+outputs/
+main/outputs/
+main/data/outputs/
+
+# Reference databases (large files)
+main/data/reference/
+
+# QIIME2 artifacts (large files)
+*.qza
+
+# App state/config
+main/.stamina-biome/
+
+# Generated configs
+main/configs/
+
+# Diagnostic files
+*.diagnose.txt
+
+# Build/tool artifacts (preserve wrappers)
+main/tools/VALENCIA/
+
+# Large binary tool directories (dorado basecaller - download separately)
+tools/dorado/
+tools/dorado-*/
+
+# Keep files (for maintaining empty directories)
+!.keep
+!**/.keep
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+dist/
+build/
+
+# Frontend dependencies
+frontend/node_modules/
+node_modules/
+
+# Frontend test outputs
+frontend/screenshots/
+frontend/*.png
+
+# UI runtime state
+.ui_runs_registry.json
+.setup_complete
+
+# Test files
+test/
+test_*.png
+archive/
+
+# Build artifacts
+cli/*.spec

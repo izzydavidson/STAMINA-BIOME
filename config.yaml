@@ -1,0 +1,20 @@
+# --- Required concept fields (example) ---
+input_type: fastq                # fastq | fast5
+sample_type: vaginal             # skin | oral | gut | vaginal
+
+# --- Input paths (use the one matching input_type) ---
+fastq_dir: /path/to/fastq        # used when input_type: fastq
+fast5_dir: /path/to/fast5        # used when input_type: fast5
+
+# --- Optional but recommended ---
+run_id: run_001
+output_dir: /path/to/output
+
+# --- Optional preprocessing controls ---
+prep_profile: alt_fastq_prep     # dorado | alt_fastq_prep
+barcode_kit: null                # e.g., SQK-RBK114.24 (if applicable)
+min_qscore: 10                   # example default; adjust per validated preset
+
+# --- Classification modules ---
+kraken_enabled: true
+valencia_enabled: auto           # auto | true | false

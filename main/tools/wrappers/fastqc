@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Docker wrapper for FastQC
+# Runs FastQC inside a container with proper volume mounts
+
+set -euo pipefail
+
+FASTQC_IMAGE="${STAMINA_BIOME_FASTQC_IMAGE:-biocontainers/fastqc:v0.11.9_cv8}"
+
+# Parse arguments to find input files and output directory
+ARGS=()
+OUTPUT_DIR=""
+INPUT_FILES=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--outdir)
+            OUTPUT_DIR="$2"
+            ARGS+=("-o" "/output")
+            shift 2
+            ;;
+        -*)
+            ARGS+=("$1")
+            shift
+            ;;
+        *)
+            # This is an input file
+            INPUT_FILES+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ ${#INPUT_FILES[@]} -eq 0 ]]; then
+    echo "ERROR: No input files provided" >&2
+    exit 1
+fi
+
+if [[ -z "${OUTPUT_DIR}" ]]; then
+    OUTPUT_DIR="."
+fi
+
+# Create output directory if it doesn't exist
+mkdir -p "${OUTPUT_DIR}"
+
+# Build docker command with volume mounts
+DOCKER_CMD=(docker run --rm --platform=linux/amd64)
+
+# Mount output directory
+DOCKER_CMD+=(-v "$(cd "${OUTPUT_DIR}" && pwd):/output:rw")
+
+# Mount each input file and track container paths
+CONTAINER_INPUTS=()
+for f in "${INPUT_FILES[@]}"; do
+    abs_path="$(cd "$(dirname "${f}")" && pwd)/$(basename "${f}")"
+    dir_path="$(dirname "${abs_path}")"
+    base_name="$(basename "${abs_path}")"
+    # Mount the directory containing the file
+    DOCKER_CMD+=(-v "${dir_path}:/input_${#CONTAINER_INPUTS[@]}:ro")
+    CONTAINER_INPUTS+=("/input_${#CONTAINER_INPUTS[@]}/${base_name}")
+done
+
+DOCKER_CMD+=("${FASTQC_IMAGE}" fastqc "${ARGS[@]}" "${CONTAINER_INPUTS[@]}")
+
+# Execute
+exec "${DOCKER_CMD[@]}"

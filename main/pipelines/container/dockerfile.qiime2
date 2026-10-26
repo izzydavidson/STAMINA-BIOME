@@ -1,0 +1,65 @@
+FROM --platform=linux/amd64 ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    coreutils \
+    findutils \
+    gzip \
+    pigz \
+    tar \
+    unzip \
+    curl \
+    wget \
+    git \
+    jq \
+  && rm -rf /var/lib/apt/lists/*
+
+# Miniconda (linux/amd64)
+ENV CONDA_DIR=/opt/conda
+RUN curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-py310_24.3.0-0-Linux-x86_64.sh -o /tmp/miniconda.sh \
+ && bash /tmp/miniconda.sh -b -p "${CONDA_DIR}" \
+ && rm -f /tmp/miniconda.sh
+ENV PATH="${CONDA_DIR}/bin:${PATH}"
+
+# QIIME2 pinned install (example: 2024.2)
+RUN conda update -y -n base -c defaults conda \
+ && conda create -y -n qiime2-2024.2 -c conda-forge -c bioconda \
+      qiime2=2024.2 \
+ && conda clean -a -y
+
+# Make qiime2 available without needing "conda activate"
+RUN ln -s "${CONDA_DIR}/envs/qiime2-2024.2/bin/qiime" /usr/local/bin/qiime
+
+WORKDIR /work
+
+RUN qiime --version || true
+
+# Optional manifest for UI/debug
+RUN python3 - <<'PY'
+import json, subprocess, os
+
+def v(cmd):
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+        out = (out or "").strip()
+        return out.splitlines()[0] if out else ""
+    except Exception:
+        return ""
+
+manifest = {
+    "qiime2": {"cmd": "qiime --version", "version": v(["qiime", "--version"])},
+    "jq": {"cmd": "jq --version", "version": v(["jq", "--version"])},
+    "bash": {"cmd": "bash --version", "version": v(["bash", "--version"])},
+}
+
+os.makedirs("/opt/stamina-biome", exist_ok=True)
+with open("/opt/stamina-biome/tool_manifest.json", "w", encoding="utf-8") as f:
+    json.dump(manifest, f, indent=2)
+
+print("Wrote /opt/stamina-biome/tool_manifest.json")
+PY

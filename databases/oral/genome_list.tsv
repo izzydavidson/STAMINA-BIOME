@@ -1,0 +1,130 @@
+accession	species	taxid	source	notes
+# ── CAMISIM simulation genomes ───────────────────────────────────────────────
+# Taxids corrected 2026-07-09 (NCBI-verified via eutils efetch XML):
+#   Old taxid 1303 -> 28037 (1303 = S. oralis, not S. mitis; 28037 = S. mitis)
+#   Old taxid 838  -> 28132 (838 = Prevotella genus node, not species)
+#   Old taxid 836  -> 837   (836 = Porphyromonas genus node, not species)
+#   Old taxid 732  -> 729   (732 = Aggregatibacter aphrophilus, not H. parainfluenzae)
+#   Old taxid 483  -> 28449 (483 = Neisseria cinerea, not N. subflava)
+#   Old taxid 224471 -> 28112 (224471 = Burkholderiales incertae sedis, not T. forsythia)
+#   Old taxid 1760   -> 1655  (1760 = Actinomycetes class, not A. naeslundii species)
+GCF_900637025.1	Streptococcus mitis	28037	camisim_simulation	taxid corrected 2026-07-09: old taxid 1303 = S. oralis; 28037 = S. mitis
+GCF_000164675.2	Streptococcus salivarius	1304	camisim_simulation	taxid corrected 2026-07-09: old taxid 1318 = S. parasanguinis; 1304 = S. salivarius
+GCF_900186885.1	Veillonella parvula	29466	camisim_simulation
+GCF_900625065.1	Prevotella melaninogenica	28132	camisim_simulation	taxid corrected 2026-07-09: old taxid 838 = Prevotella genus node; 28132 = P. melaninogenica
+GCF_003019295.1	Fusobacterium nucleatum	851	camisim_simulation
+GCF_900636915.1	Haemophilus parainfluenzae	729	camisim_simulation	taxid corrected 2026-07-09: old taxid 732 = A. aphrophilus; 729 = H. parainfluenzae
+GCF_000212375.1	Porphyromonas gingivalis	837	camisim_simulation	taxid corrected 2026-07-09: old taxid 836 = Porphyromonas genus node; 837 = P. gingivalis
+GCA_000011025.1	Rothia mucilaginosa	43675	camisim_simulation
+GCF_900475315.1	Neisseria subflava	28449	camisim_simulation	taxid corrected 2026-07-09: old taxid 483 = N. cinerea; 28449 = N. subflava
+GCF_004362855.1	Tannerella forsythia	28112	camisim_simulation	taxid corrected 2026-07-09: old taxid 224471 = Burkholderiales incertae sedis; 28112 = T. forsythia
+GCF_016127855.1	Actinomyces naeslundii	1655	camisim_simulation	taxid corrected 2026-07-09: old taxid 1760 = Actinomycetes class; 1655 = A. naeslundii
+# ── Additional NCBI RefSeq strains (added to improve per-species recall) ──────
+GCF_900637025.1	Streptococcus oralis	1303	ncbi_additional	Low recall in v4 validation sweep; taxid 1303 = S. oralis (confirmed NCBI 2026-07-09)
+GCF_016127555.1	Streptococcus oralis	1303	ncbi_additional	Low recall in v4 validation sweep
+GCF_018985485.2	Streptococcus oralis	1303	ncbi_additional	Low recall in v4 validation sweep
+GCF_023611505.1	Streptococcus oralis	1303	ncbi_additional	Low recall in v4 validation sweep
+
+# ── expand_all_sites.py additions (2026-07-09) ─────────────────────────────────
+GCF_900475975.1	Streptococcus intermedius	1338	ncbi_expand	Milleri group; abscess former
+GCF_016725005.1	Streptococcus constellatus	76860	ncbi_expand	Milleri group; abscess former
+GCF_900636475.1	Streptococcus anginosus	1328	ncbi_expand	Milleri group; liver/brain abscess
+GCF_019046945.1	Streptococcus gordonii	1302	ncbi_expand	Pioneer coloniser; inter-species signalling
+GCF_900475445.1	Streptococcus cristatus	45634	ncbi_expand	Oral commensal; formerly S. crista; plaque
+GCF_900475505.1	Streptococcus sanguinis	1305	ncbi_expand	Pioneer coloniser; dental plaque biofilm initiator; HOMD core species
+GCF_019048645.1	Streptococcus mutans	1309	ncbi_expand	Primary dental caries pathogen
+GCF_000164675.2	Streptococcus parasanguinis	1318	ncbi_expand	Early oral biofilm coloniser; coaggregation
+GCF_900475035.1	Streptococcus pyogenes	1314	ncbi_expand	GAS; pharyngitis; tonsillitis; scarlet fever
+GCF_041431435.1	Veillonella atypica	39777	ncbi_expand	Common oral Veillonella
+GCF_001457635.1	Streptococcus pneumoniae	1313	ncbi_expand	Pharyngeal pathogen; pneumonia; oral coloniser
+GCF_900637515.1	Veillonella dispar	39778	ncbi_expand	Common oral Veillonella
+GCF_003172995.1	Streptococcus sobrinus	1310	ncbi_expand	Dental caries; second only to S. mutans
+GCF_002959775.1	Veillonella rogosae	423477	ncbi_expand	Oral Veillonella
+GCF_900637975.1	Actinomyces viscosus	1656	ncbi_expand	Dental plaque; caries-associated
+GCF_030253495.1	Actinomyces israelii	1659	ncbi_expand	Actinomycosis; head and neck infection
+GCF_031191545.1	Schaalia odontolytica	1660	ncbi_expand	Dental plaque; formerly Actinomyces odontolyticus; NCBI current name Schaalia odontolytica
+GCF_000164695.2	Rothia dentocariosa	2047	ncbi_expand	Dental caries; calculus
+GCF_016726365.1	Rothia aeria	172042	ncbi_expand	Oral commensal; lung infection risk
+GCF_001953955.1	Prevotella intermedia	28131	ncbi_expand	Periodontitis; pregnancy gingivitis
+GCF_016127955.1	Actinomyces oris	544580	ncbi_expand	Dominant early oral coloniser; coaggregation
+GCF_000429265.1	Actinomyces gerencseriae	52769	ncbi_expand	Dental plaque; previously A. israelii serotype II
+GCF_018127825.1	Prevotella nigrescens	28133	ncbi_expand	Periodontitis association
+GCF_055390445.1	Prevotella denticola	28129	ncbi_expand	Dental plaque Prevotella
+GCF_900454935.1	Prevotella pallens	60133	ncbi_expand	Oral Prevotella; HOMD listed species
+GCF_000477535.1	Segatella salivae	228604	ncbi_expand	Oral Prevotella-related; formerly Prevotella salivae; reclassified 2020
+GCF_000160475.1	Fusobacterium periodonticum	860	ncbi_expand	Periodontitis; plaque bridge organism
+GCF_000378085.1	Hoylesella loescheii	840	ncbi_expand	Oral anaerobe; formerly Prevotella loescheii; reclassified 2020
+GCF_000412995.1	Treponema vincentii	69710	ncbi_expand	Periodontal Treponema; HOMD listed
+GCF_023518055.1	Aggregatibacter actinomycetemcomitans	714	ncbi_expand	Aggressive periodontitis; HACEK endocarditis
+GCF_017161265.1	Treponema medium	58231	ncbi_expand	Periodontal Treponema
+GCF_000008185.1	Treponema denticola	158	ncbi_expand	Red complex; deep periodontal pockets
+GCF_900476035.1	Aggregatibacter segnis	739	ncbi_expand	Formerly Haemophilus segnis; oral commensal; HACEK group
+GCF_900187105.1	Eikenella corrodens	539	ncbi_expand	Periodontal pathogen; bite wound infection
+GCF_900637905.1	Parvimonas micra	33033	ncbi_expand	Periodontal pathogen; abscess former
+GCF_000163895.2	Filifactor alocis	143361	ncbi_expand	Emerging periodontal pathogen; difficult to culture
+GCF_004803795.1	Campylobacter rectus	203	ncbi_expand	Periodontal pathogen
+GCF_004803815.1	Campylobacter showae	204	ncbi_expand	Periodontal pathogen
+GCF_002302415.1	Capnocytophaga gingivalis	1017	ncbi_expand	Oral commensal; immunocomp infection risk
+GCF_002302495.1	Capnocytophaga sputigena	1019	ncbi_expand	Oral commensal; periodontal disease
+GCF_000023285.1	Capnocytophaga ochracea	1018	ncbi_expand	Oral commensal; abscesses
+GCF_002302565.1	Capnocytophaga canimorsus	28188	ncbi_expand	Dog bite septicaemia; fatal in asplenic patients
+GCF_020736045.1	Haemophilus influenzae	727	ncbi_expand	Respiratory pathogen; oral pharyngeal carriage
+GCF_000023905.1	Leptotrichia buccalis	40542	ncbi_expand	Dominant in some oral communities
+GCF_007990365.1	Leptotrichia trevisanii	109328	ncbi_expand	Oral commensal
+GCF_013030075.1	Neisseria gonorrhoeae	485	ncbi_expand	Pharyngeal gonorrhoea; increasing prevalence
+GCF_017753665.1	Neisseria sicca	490	ncbi_expand	Common oral commensal Neisseria
+GCF_900637305.1	Cardiobacterium hominis	2718	ncbi_expand	HACEK group; subacute endocarditis; oral origin
+GCF_019931005.1	Granulicatella adiacens	46124	ncbi_expand	Nutritionally variant streptococcus; subacute endocarditis
+GCF_900475905.1	Kingella kingae	504	ncbi_expand	HACEK group; paediatric septic arthritis; oral coloniser
+GCF_013267415.1	Abiotrophia defectiva	46125	ncbi_expand	Nutritionally variant streptococcus; subacute endocarditis
+GCF_007990545.2	Leptotrichia wadei	157687	ncbi_expand	Oral commensal; HOMD listed species
+GCF_900476075.1	Moraxella catarrhalis	480	ncbi_expand	Upper respiratory pathogen; oral reservoir
+GCF_000208405.1	Selenomonas sputigena	69823	ncbi_expand	Dental plaque anaerobe; crescent-shaped
+GCF_003570845.1	Dialister pneumosintes	39950	ncbi_expand	Oral/pulmonary anaerobe; periodontitis
+GCF_900476045.1	Gemella morbillorum	29391	ncbi_expand	Oral commensal; endocarditis risk
+GCF_008692995.1	Gemella haemolysans	1379	ncbi_expand	Oral commensal; endocarditis risk
+GCF_000160055.1	Dialister invisus	218538	ncbi_expand	Oral anaerobe; periodontitis; previously uncultured
+GCF_002243135.1	Finegoldia magna	1260	ncbi_expand	Oral anaerobe; abscess former
+GCF_000013425.1	Staphylococcus aureus	1280	ncbi_expand	Oral carriage; post-dental infection
+GCF_003044445.1	Neisseria mucosa	488	ncbi_expand	Common oral commensal Neisseria
+GCF_055385135.1	Prevotella histicola	470565	ncbi_expand	Oral Prevotella; common in HMP oral sites; NCBI taxid 470565
+GCF_000182965.3	Candida albicans	5476	ncbi_expand	Oral candidiasis (thrush); oropharyngeal
+GCF_000006335.3	Candida tropicalis	5482	ncbi_expand	Oral candidiasis; azole resistance emerging
+GCF_020097375.1	Porphyromonas endodontalis	28124	ncbi_expand	Endodontic infections; apical periodontitis
+GCF_010111755.1	Nakaseomyces glabratus	5478	ncbi_expand	Oral candidiasis; fluconazole-resistant; NCBI current name Nakaseomyces glabratus (formerly Candida glabrata); taxid 5478 confirmed
+GCF_000026945.1	Candida dubliniensis	42374	ncbi_expand	Oral candidiasis; morphologically similar to C. albicans; NCBI taxid 42374
+GCF_025151385.1	Hoylesella buccalis	28127	ncbi_expand	Was Prevotella buccalis; oral anaerobe; periodontal sulcus
+GCF_900476055.1	Streptococcus australis	113107	ncbi_expand	Oral commensal; mitis group; HOMD core species; NCBI taxid 113107
+GCF_000565015.1	Porphyromonas catoniae	41976	ncbi_expand	Oral Porphyromonas; periodontal pocket; NCBI taxid 41976
+GCF_016127995.1	Schaalia meyeri	52773	ncbi_expand	Was Actinomyces meyeri; oral actinomycete; dental plaque
+GCF_019380255.1	Schaalia turicensis	131111	ncbi_expand	Was Actinomyces turicensis; oral actinomycete; NCBI taxid 131111
+GCF_000187465.1	Streptococcus infantis	68892	ncbi_expand	Oral mitis-group streptococcus; early biofilm coloniser; NCBI taxid 68892
+GCF_000429245.1	Schaalia georgiae	52768	ncbi_expand	Was Actinomyces georgiae; oral commensal; NCBI taxid 52768
+GCF_001553565.1	Actinomyces radicidentis	111015	ncbi_expand	Oral actinomycete; root caries and endodontic infections
+GCF_003589745.1	Lachnoanaerobaculum umeaense	617123	ncbi_expand	Oral Lachnospiraceae; NCBI taxid 617123; oral mucosa
+GCF_000239695.1	Actinomyces graevenitzii	55565	ncbi_expand	Oral actinomycete; HMP oral sites; NCBI taxid 55565
+GCF_000185385.1	Lachnoanaerobaculum saburreum	467210	ncbi_expand	Oral Lachnospiraceae; supragingival plaque; NCBI taxid 467210
+GCF_002952055.1	Desulfobulbus oralis	1986146	ncbi_expand	Oral sulphate-reducer; severe periodontitis; NCBI taxid 1986146
+GCF_016028855.1	Rothia kristinae	37923	ncbi_expand	Was Kocuria kristinae; reclassified to Rothia 2022; oral/skin commensal
+GCF_024181585.1	Treponema socranskii	53419	ncbi_expand	Oral spirochaete; periodontal disease; NCBI taxid 53419
+GCF_003054445.1	Pichia kudriavzevii	4909	ncbi_expand	Was Candida krusei; intrinsically fluconazole-resistant; oral isolate; NCBI taxid 4909
+GCF_008327825.1	Leptotrichia shahii	157691	ncbi_expand	Oral Leptotrichia; HMP oral sites; NCBI taxid 157691
+GCF_000468055.1	Treponema lecithinolyticum	53418	ncbi_expand	Oral spirochaete; periodontitis; NCBI taxid 53418
+GCF_000413055.1	Treponema maltophilum	51160	ncbi_expand	Oral spirochaete; periodontal pocket; NCBI taxid 51160
+GCF_007990525.1	Leptotrichia hofstadii	157688	ncbi_expand	Oral Leptotrichia; plaque and gingival sulcus; NCBI taxid 157688
+GCF_001298465.1	Campylobacter concisus	199	ncbi_expand	Oral Campylobacter; subgingival; also GI
+GCF_001190745.1	Campylobacter gracilis	824	ncbi_expand	Oral Campylobacter; subgingival plaque; periodontal disease
+GCF_013372225.1	Campylobacter ureolyticus	827	ncbi_expand	Oral Campylobacter; was Bacteroides ureolyticus; NCBI taxid 827
+GCF_900636915.1	Aggregatibacter aphrophilus	732	ncbi_expand	Oral Aggregatibacter; HACEK endocarditis; NCBI taxid 732
+GCF_005221285.1	Neisseria flavescens	484	ncbi_expand	Oral Neisseria commensal; NCBI taxid 484
+GCF_900187255.1	Capnocytophaga haemolytica	45243	ncbi_expand	Oral gliding bacterium; periodontal sulcus; NCBI taxid 45243
+GCF_900453895.1	Neisseria elongata	495	ncbi_expand	Oral Neisseria; NCBI taxid 495; rare endocarditis
+GCF_900446675.1	Capnocytophaga granulosa	45242	ncbi_expand	Oral gliding bacterium; dental plaque; NCBI taxid 45242
+GCF_054054265.1	Granulicatella elegans	137732	ncbi_expand	Nutritionally variant streptococcus; oral/blood; NCBI taxid 137732
+GCF_900450505.1	Slackia exigua	84109	ncbi_expand	Oral Coriobacteriia; root canal and endodontic infections
+GCF_947090205.1	Dialister micraerophilus	309120	ncbi_expand	Oral Veillonellaceae; periodontal pocket; NCBI taxid 309120
+GCF_002959935.1	Veillonella tobetsuensis	1110546	ncbi_expand	Oral Veillonella; HMP oral sites; NCBI taxid 1110546
+GCF_002959855.1	Veillonella denticariosi	419208	ncbi_expand	Oral Veillonella; dental caries associated; NCBI taxid 419208
+GCF_002959895.1	Veillonella infantium	1911679	ncbi_expand	Oral Veillonella; infant oral microbiome; NCBI taxid 1911679
+GCF_000469465.1	Gemella bergeri	84136	ncbi_expand	Oral Gemella; gingival sulcus; NCBI taxid 84136
+GCF_053758955.1	Gemella sanguinis	84135	ncbi_expand	Oral Gemella; HMP oral sites; endocarditis risk; NCBI taxid 84135

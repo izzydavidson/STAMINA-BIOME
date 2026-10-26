@@ -1,0 +1,107 @@
+{
+  "version": "2.1",
+  "input_styles": {
+    "FAST5_DIR": {
+      "description": "A directory containing one or more FAST5 files.",
+      "expects": ["input.fast5_dir"]
+    },
+    "FAST5_ARCHIVE": {
+      "description": "A compressed archive of FAST5 files (.zip or .tar.gz).",
+      "expects": ["input.fast5_archive"]
+    },
+    "FASTQ_SINGLE": {
+      "description": "Single-end FASTQ (optionally gzipped).",
+      "expects": ["input.fastq_r1"]
+    },
+    "FASTQ_PAIRED": {
+      "description": "Paired-end FASTQ (R1 + R2, optionally gzipped).",
+      "expects": ["input.fastq_r1", "input.fastq_r2"]
+    },
+    "FASTQ_DIR_SINGLE": {
+      "description": "A directory containing single-end FASTQ files (optional future batch mode).",
+      "expects": ["input.fastq_dir"]
+    },
+    "FASTQ_DIR_PAIRED": {
+      "description": "A directory containing paired FASTQ files (optional future batch mode).",
+      "expects": ["input.fastq_dir"]
+    }
+  },
+  "rules": {
+    "lr_no_paired_fastq": "Long-read pipelines must not advertise FASTQ_PAIRED support.",
+    "bam_not_supported": "BAM input is not supported."
+  },
+  "pipelines": {
+    "lr_meta": {
+      "label": "Long-read metagenomics",
+      "read_technology": "long",
+      "approach": "shotgun",
+      "supported_platforms": ["ONT", "PACBIO"],
+      "supported_inputs": ["FAST5_DIR", "FAST5_ARCHIVE", "FASTQ_SINGLE", "FASTQ_DIR_SINGLE"],
+      "optional_config": {
+        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+      },
+      "outputs": [
+        "logs/pipeline.log",
+        "results/report/index.html",
+        "results/tables/summary.tsv"
+      ],
+      "steps": ["validate_input", "prepare_reads", "qc", "classify", "report"]
+    },
+    "lr_amp": {
+      "label": "Long-read amplicon",
+      "read_technology": "long",
+      "approach": "amplicon",
+      "supported_platforms": ["ONT", "PACBIO"],
+      "supported_inputs": ["FAST5_DIR", "FAST5_ARCHIVE", "FASTQ_SINGLE", "FASTQ_DIR_SINGLE"],
+      "optional_config": {
+        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+      },
+      "outputs": [
+        "logs/pipeline.log",
+        "results/report/index.html",
+        "results/tables/summary.tsv"
+      ],
+      "steps": ["validate_input", "prepare_reads", "qc", "amplicon_process", "report"]
+    },
+    "sr_meta": {
+      "label": "Short-read metagenomics",
+      "read_technology": "short",
+      "approach": "shotgun",
+      "supported_platforms": ["ILLUMINA", "BGI", "IONTORRENT"],
+      "supported_inputs": ["FASTQ_SINGLE", "FASTQ_PAIRED", "FASTQ_DIR_SINGLE", "FASTQ_DIR_PAIRED"],
+      "optional_config": {
+        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+      },
+      "outputs": [
+        "logs/pipeline.log",
+        "results/report/index.html",
+        "results/tables/summary.tsv"
+      ],
+      "steps": ["validate_input", "prepare_reads", "qc", "classify", "report"]
+    },
+    "sr_amp": {
+      "label": "Short-read amplicon (QIIME2 + optional VALENCIA)",
+      "read_technology": "short",
+      "approach": "amplicon",
+      "supported_platforms": ["ILLUMINA", "BGI", "IONTORRENT"],
+      "supported_inputs": ["FASTQ_SINGLE", "FASTQ_PAIRED", "FASTQ_DIR_SINGLE", "FASTQ_DIR_PAIRED"],
+      "optional_config": {
+        "specimen": ["vaginal", "gut", "oral", "skin", "other"],
+        "valencia.mode": ["auto", "on", "off"]
+      },
+      "outputs": [
+        "sr_amp/results/qiime2/table.qza",
+        "sr_amp/results/qiime2/rep-seqs.qza",
+        "sr_amp/results/qiime2/denoising-stats.qza",
+        "sr_amp/results/qiime2/exports/table/feature-table.tsv",
+        "sr_amp/results/qiime2/exports/rep-seqs/dna-sequences.fasta",
+        "sr_amp/results/qiime2/exports/taxonomy/taxonomy.tsv",
+        "sr_amp/results/qiime2/exports/phylogeny/tree.nwk",
+        "sr_amp/results/valencia/valencia_input.csv",
+        "sr_amp/results/valencia/valencia_out*",
+        "sr_amp/results/valencia/valencia_debug.log"
+      ],
+      "steps": ["validate_input", "prepare_reads", "qc", "qiime2", "exports", "valencia", "report"]
+    }
+  }
+}

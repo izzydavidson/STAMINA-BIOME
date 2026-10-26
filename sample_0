@@ -1,0 +1,12 @@
+sample_id,taxid,taxon,rank,reads,fraction
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,1303,Streptococcus oralis,species,52952,0.15031
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,1318,Streptococcus parasanguinis,species,43268,0.12282
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,29466,Veillonella parvula,species,33634,0.09547
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,1655,Actinomyces naeslundii,species,31755,0.09014
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,43675,Rothia mucilaginosa,species,21183,0.06013
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,2479840,Prevotella marseillensis,species,53767,0.15262
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,28123,Porphyromonas asaccharolytica,species,23687,0.06724
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,70586,Aquabacterium commune,species,24203,0.06870
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,483,Neisseria cinerea,species,14397,0.04087
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,732,Aggregatibacter aphrophilus,species,25226,0.07161
+/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs/oral_customdb_v5/results/tables/results.csv,851,Fusobacterium nucleatum,species,28210,0.08008

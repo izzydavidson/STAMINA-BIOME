@@ -1,0 +1,12 @@
+run_id	dataset	confidence	mhg	MAE_pct	species_detected	species_total	recovery_pct	false_positives
+camisim_test_lr_meta	generic	0.05	2	1.941	27	38	71	3
+sweep_c01_mhg2	generic	0.01	2	1.665	32	38	84	4
+sweep_generic_c001_mhg1	generic	0.01	1	1.665	32	38	84	4
+sweep_generic_c001_mhg2	generic	0.01	2	1.665	32	38	84	4
+sweep_generic_c002_mhg1	generic	0.02	1	1.788	29	38	76	4
+sweep_generic_c002_mhg2	generic	0.02	2	1.788	29	38	76	4
+sweep_generic_c003_mhg1	generic	0.03	1	1.847	29	38	76	4
+sweep_generic_c003_mhg2	generic	0.03	2	1.847	29	38	76	4
+sweep_generic_c004_mhg1	generic	0.04	1	1.895	27	38	71	3
+sweep_generic_c004_mhg2	generic	0.04	2	1.895	27	38	71	3
+sweep_generic_c005_mhg1	generic	0.05	1	1.941	27	38	71	3

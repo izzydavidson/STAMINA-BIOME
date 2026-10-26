@@ -1,0 +1,294 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stamina-biome.local/schemas/run.schema.json",
+  "title": "STAMINA-BIOME Run Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pipeline_id", "run", "technology", "input", "resources", "params", "output"],
+  "properties": {
+    "pipeline_id": {
+      "type": "string",
+      "enum": ["lr_meta", "lr_amp", "sr_meta", "sr_amp"]
+    },
+
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["work_dir", "run_id", "force_overwrite"],
+      "properties": {
+        "work_dir": { "type": "string", "minLength": 1 },
+        "run_id": { "type": "string", "minLength": 1 },
+        "force_overwrite": { "type": "integer", "enum": [0, 1] }
+      }
+    },
+
+    "technology": {
+      "type": "string",
+      "enum": ["ONT", "PACBIO", "ILLUMINA", "BGI", "IONTORRENT"]
+    },
+
+    "specimen": {
+      "type": "string",
+      "enum": ["vaginal", "gut", "oral", "skin", "other"],
+      "default": "other"
+    },
+
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["style"],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": [
+            "FAST5_DIR",
+            "FAST5_ARCHIVE",
+            "FASTQ_SINGLE",
+            "FASTQ_PAIRED",
+            "FASTQ_DIR_SINGLE",
+            "FASTQ_DIR_PAIRED"
+          ]
+        },
+
+        "fast5_dir": { "type": "string" },
+        "fast5_archive": { "type": "string" },
+
+        "fastq_r1": { "type": "string" },
+        "fastq_r2": { "type": "string" },
+
+        "fastq_dir": { "type": "string" }
+      }
+    },
+
+    "resources": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["threads"],
+      "properties": {
+        "threads": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+
+    "tools": {
+      "type": "object",
+      "additionalProperties": true
+    },
+
+    "host": {
+      "type": "object",
+      "description": "Host-level configuration for mounting external resources into containers",
+      "additionalProperties": true,
+      "properties": {
+        "repo_root": {
+          "type": "string",
+          "description": "Absolute path to the repository root on the host machine"
+        },
+        "mounts": {
+          "type": "object",
+          "description": "Legacy mount configuration (still supported for backwards compatibility)",
+          "additionalProperties": true
+        },
+        "resources": {
+          "type": "object",
+          "description": "External resources that must be mounted from the host into containers",
+          "additionalProperties": false,
+          "properties": {
+            "kraken2_db": {
+              "type": "object",
+              "description": "Kraken2 database configuration for taxonomic classification (required for sr_meta)",
+              "additionalProperties": false,
+              "properties": {
+                "host_path": {
+                  "type": "string",
+                  "description": "Absolute path to the Kraken2 database directory on the host machine"
+                },
+                "container_path": {
+                  "type": "string",
+                  "description": "Mount target path inside the container (default: /refs/kraken2_db)",
+                  "default": "/refs/kraken2_db"
+                }
+              },
+              "required": ["host_path"]
+            },
+            "minimap2_human_ref": {
+              "type": "object",
+              "description": "Human genome reference for host depletion with minimap2 (required when params.common.remove_host=1)",
+              "additionalProperties": false,
+              "properties": {
+                "host_path": {
+                  "type": "string",
+                  "description": "Absolute path to the human reference directory or file on the host machine"
+                },
+                "container_path": {
+                  "type": "string",
+                  "description": "Mount target path inside the container (default: /refs/human)",
+                  "default": "/refs/human"
+                },
+                "index_filename": {
+                  "type": "string",
+                  "description": "Name of the minimap2 index file (.mmi) within the directory. If host_path is a file, this is ignored."
+                }
+              },
+              "required": ["host_path"]
+            }
+          }
+        }
+      }
+    },
+
+    "params": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["common"],
+      "properties": {
+        "common": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["min_qscore", "remove_host"],
+          "properties": {
+            "min_qscore": { "type": "integer", "minimum": 0, "maximum": 60 },
+            "remove_host": { "type": "integer", "enum": [0, 1] },
+
+            "specimen": {
+              "type": "string",
+              "enum": ["vaginal", "gut", "oral", "skin", "other"]
+            }
+          }
+        }
+      }
+    },
+
+    "qiime2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sample_id": { "type": "string" },
+
+        "primers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "forward": { "type": "string" },
+            "reverse": { "type": "string" }
+          }
+        },
+
+        "classifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "qza": { "type": "string" }
+          }
+        },
+
+        "dada2": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "trim_left_f": { "type": "integer", "minimum": 0 },
+            "trim_left_r": { "type": "integer", "minimum": 0 },
+            "trunc_len_f": { "type": "integer", "minimum": 0 },
+            "trunc_len_r": { "type": "integer", "minimum": 0 },
+            "n_threads": { "type": "integer", "minimum": 0 }
+          }
+        },
+
+        "diversity": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sampling_depth": { "type": "integer", "minimum": 0 },
+            "metadata_tsv": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "valencia": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "type": "string", "enum": ["auto", "on", "off"], "default": "auto" },
+
+        "repo_url": { "type": "string" },
+        "ref_csv": { "type": "string" },
+        "valencia_py": { "type": "string" }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected"],
+      "properties": {
+        "selected": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "export_dir": { "type": "string" }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if": { "properties": { "pipeline_id": { "enum": ["lr_meta", "lr_amp"] } } },
+      "then": {
+        "properties": {
+          "technology": { "enum": ["ONT", "PACBIO"] },
+          "input": {
+            "allOf": [
+              {
+                "if": { "properties": { "style": { "const": "FAST5_DIR" } }, "required": ["style"] },
+                "then": { "required": ["fast5_dir"] }
+              },
+              {
+                "if": { "properties": { "style": { "const": "FAST5_ARCHIVE" } }, "required": ["style"] },
+                "then": { "required": ["fast5_archive"] }
+              },
+              {
+                "if": { "properties": { "style": { "const": "FASTQ_SINGLE" } }, "required": ["style"] },
+                "then": { "required": ["fastq_r1"] }
+              }
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "if": { "properties": { "pipeline_id": { "enum": ["sr_meta", "sr_amp"] } } },
+      "then": {
+        "properties": {
+          "technology": { "enum": ["ILLUMINA", "BGI", "IONTORRENT"] },
+          "input": {
+            "allOf": [
+              {
+                "if": { "properties": { "style": { "const": "FASTQ_SINGLE" } }, "required": ["style"] },
+                "then": { "required": ["fastq_r1"] }
+              },
+              {
+                "if": { "properties": { "style": { "const": "FASTQ_PAIRED" } }, "required": ["style"] },
+                "then": { "required": ["fastq_r1", "fastq_r2"] }
+              }
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "if": { "properties": { "pipeline_id": { "const": "sr_amp" } } },
+      "then": {
+        "properties": {
+          "input": {
+            "properties": {
+              "style": { "enum": ["FASTQ_SINGLE", "FASTQ_PAIRED"] }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

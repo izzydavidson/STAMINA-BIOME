@@ -1,0 +1,81 @@
+accession	species	taxid	source	notes
+# ── CAMISIM simulation genomes (added to library with kraken:taxid headers) ───
+L_crispatus_CTV05.fa	Lactobacillus crispatus	47770	camisim_simulation	Custom assembly; no GCF accession
+L_crispatus_JV_V01.fa	Lactobacillus crispatus	47770	camisim_simulation	Custom assembly; no GCF accession
+L_crispatus_CO3.fa	Lactobacillus crispatus	47770	camisim_simulation	Custom assembly; no GCF accession
+L_iners_KY.fa	Lactobacillus iners	147802	camisim_simulation	Custom assembly; no GCF accession
+L_iners_C0094A1.fa	Lactobacillus iners	147802	camisim_simulation	Custom assembly; no GCF accession
+L_jensenii_208-300.fa	Lactobacillus jensenii	109790	camisim_simulation	Custom assembly; no GCF accession
+L_gasseri_ATCC33323.fa	Lactobacillus gasseri	1596	camisim_simulation	Custom assembly; no GCF accession
+L_vaginalis_DSM5837.fa	Lactobacillus vaginalis	1633	camisim_simulation	Custom assembly; species_taxid=1633 (not strain 2058610)
+Gardnerella_vaginalis_HMP9231.fa	Gardnerella vaginalis	2702	camisim_simulation	Custom assembly; no GCF accession
+Gardnerella_leopoldii.fa	Gardnerella leopoldii	2792978	camisim_simulation	Custom assembly; no GCF accession
+Gardnerella_piotii.fa	Gardnerella piotii	2792977	camisim_simulation	Custom assembly; no GCF accession
+Fannyhessea_vaginae.fa	Fannyhessea vaginae	82135	camisim_simulation	Custom assembly; no GCF accession
+Prevotella_bivia.fa	Prevotella bivia	28125	camisim_simulation	Custom assembly; no GCF accession
+Mobiluncus_mulieris.fa	Mobiluncus mulieris	2052	camisim_simulation	Custom assembly; no GCF accession
+Streptococcus_agalactiae.fa	Streptococcus agalactiae	1311	camisim_simulation	Custom assembly; no GCF accession
+Ureaplasma_urealyticum.fa	Ureaplasma urealyticum	2130	camisim_simulation	Custom assembly; no GCF accession
+Anaerococcus_prevotii.fa	Anaerococcus prevotii	33034	camisim_simulation	Custom assembly; no GCF accession
+# ── RefSeq backbone ──────────────────────────────────────────────────────────
+# 112 RefSeq representative genomes downloaded via:
+#   kraken2-build --download-library bacteria --db <db_path>
+# covering all vaginal CST-relevant taxa:
+#   Lactobacillus spp., Gardnerella spp., Fannyhessea vaginae,
+#   Sneathia sanguinegens, Mobiluncus spp., Megasphaera spp.,
+#   Dialister spp., Prevotella spp., Peptoniphilus spp., Anaerococcus spp.,
+#   Chlamydia trachomatis, Neisseria gonorrhoeae, Treponema pallidum,
+#   Candida albicans, Candida glabrata, Trichomonas vaginalis
+# Full accession list available from the Zenodo deposit metadata.
+
+# ── expand_all_sites.py additions (2026-07-09) ─────────────────────────────────
+GCF_000973085.1	Sneathia vaginalis	187101	ncbi_expand	Strong BV association; preterm birth
+GCF_042033325.1	Sneathia sanguinegens	40543	ncbi_expand	Strong BV association; often missed
+GCF_029207615.1	Gardnerella greenwoodii	2914925	ncbi_expand	4th Gardnerella species; Robinson et al. 2019
+GCF_042997415.1	Lactobacillus mulieris	2508708	ncbi_expand	Vaginal-specific Lactobacillus; Wittouck et al. 2019
+GCF_000214495.1	Megasphaera lornae	1000568	ncbi_expand	CST IV BV marker
+GCF_034298135.1	Lactobacillus acidophilus	1579	ncbi_expand	Common vaginal coloniser
+GCF_005341425.1	Limosilactobacillus fermentum	1613	ncbi_expand	Occasional vaginal isolate
+GCF_000196535.1	Mobiluncus curtisii	2051	ncbi_expand	BV curved rod; smaller than M. mulieris
+GCF_947090205.1	Dialister micraerophilus	309120	ncbi_expand	CST IV BV marker
+GCF_947087635.1	Anaerococcus tetradius	33036	ncbi_expand	BV-associated anaerobic coccus
+GCF_000758765.1	Anaerococcus lactolyticus	33032	ncbi_expand	BV-associated vaginal anaerobe
+GCF_016127475.1	Anaerococcus vaginalis	33037	ncbi_expand	BV-associated anaerobic coccus
+GCF_002243135.1	Finegoldia magna	1260	ncbi_expand	Opportunistic anaerobe; BV/PID
+GCF_016726485.1	Peptoniphilus harei	54005	ncbi_expand	BV-associated anaerobic coccus
+GCF_000177355.1	Prevotella amnii	419005	ncbi_expand	BV-specific Prevotella
+GCF_000455445.1	Hoylesella timonensis	386414	ncbi_expand	Vaginal Prevotella-related sp.; reclassified
+GCF_000008725.1	Chlamydia trachomatis	813	ncbi_expand	Most common bacterial STI; multiple serovars
+GCF_900637905.1	Parvimonas micra	33033	ncbi_expand	Vaginal anaerobe; BV/PID
+GCF_900454715.1	Peptoniphilus lacrimalis	33031	ncbi_expand	BV-associated
+GCF_000160115.1	Shuttleworthella satelles	177972	ncbi_expand	BVAB2; high BV specificity
+GCF_003019295.1	Fusobacterium nucleatum	851	ncbi_expand	Preterm birth association
+GCF_000178095.1	Peptostreptococcus anaerobius	1261	ncbi_expand	Anaerobic streptococcus; BV/PID
+GCF_013030075.1	Neisseria gonorrhoeae	485	ncbi_expand	Gonorrhoea; drug-resistant strains critical
+GCF_016791605.1	Peptoniphilus asaccharolyticus	1258	ncbi_expand	BV-associated anaerobic coccus; HMP vaginal isolate
+GCF_000410535.2	Treponema pallidum	160	ncbi_expand	Syphilis; primary/secondary/latent
+GCF_040556925.1	Mycoplasmoides genitalium	2097	ncbi_expand	Emerging STI; macrolide resistance rising; reclassified from Mycoplasma genitalium
+GCF_000767725.1	Metamycoplasma hominis	2098	ncbi_expand	BV/PID association; tetracycline resistance; reclassified from Mycoplasma hominis
+GCF_000019345.1	Ureaplasma parvum	134821	ncbi_expand	Urogenital mycoplasma; preterm birth
+GCF_001647695.1	Haemophilus ducreyi	730	ncbi_expand	Chancroid causative agent
+GCF_010111755.1	Nakaseomyces glabratus	5478	ncbi_expand	Was Candida glabrata; fluconazole-resistant VVC; reclassified
+GCF_000013425.1	Staphylococcus aureus	1280	ncbi_expand	Toxic shock; occasional vaginal pathogen
+GCF_000182965.3	Candida albicans	5476	ncbi_expand	VVC; most common (70-90% of cases)
+GCF_003054445.1	Pichia kudriavzevii	4909	ncbi_expand	Candida krusei; intrinsically fluconazole-resistant
+GCF_000006335.3	Candida tropicalis	5482	ncbi_expand	VVC; emerging azole resistance
+GCF_001543105.1	Aerococcus christensenii	87541	ncbi_expand	Vaginal isolate; urinary tract association
+GCF_000393015.1	Enterococcus faecalis	1351	ncbi_expand	Common vaginal commensal
+GCF_000182765.1	Lodderomyces parapsilosis	5480	ncbi_expand	VVC; biofilm former; neonatal risk; reclassified from Candida parapsilosis
+GCF_000026945.1	Candida dubliniensis	42374	ncbi_expand	VVC; morphologically similar to C. albicans
+GCF_001543175.1	Aerococcus urinae	1376	ncbi_expand	Urogenital Aerococcus; UTI and vaginal isolate; NCBI taxid 1376
+GCF_900454955.1	Prevotella disiens	28130	ncbi_expand	BV-associated Prevotella; vaginal anaerobe
+GCF_002871895.1	Anaerococcus hydrogenalis	33029	ncbi_expand	BV-associated anaerobic coccus; vaginal isolate
+GCF_019957155.1	Anaerococcus murdochii	411577	ncbi_expand	BV-associated anaerobic coccus; vaginal isolate
+GCF_025151385.1	Hoylesella buccalis	28127	ncbi_expand	Was Prevotella buccalis; BV-associated vaginal anaerobe
+GCF_000212375.1	Porphyromonas asaccharolytica	28123	ncbi_expand	BV-associated Porphyromonas; vaginal anaerobe
+GCF_000425905.1	Lactobacillus psittaci	116089	ncbi_expand	Rare vaginal Lactobacillus; NCBI taxid 116089 confirmed
+GCF_900454665.1	Peptoniphilus indolicus	33030	ncbi_expand	BV-associated Peptoniphilus; vaginal anaerobe
+GCF_030815095.1	Aedoeadaptatus ivorii	54006	ncbi_expand	Vaginal Prevotellaceae; rare isolate
+GCF_000160535.1	Hallella bergensis	242750	ncbi_expand	Vaginal Bacteroidota; rare isolate
+GCF_006094375.1	Staphylococcus epidermidis	1282	ncbi_expand	Vaginal commensal
+GCF_026262505.1	Trichomonas vaginalis	5722	ncbi_expand	Most common non-viral STI globally; protozoan parasite

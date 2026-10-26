@@ -1,0 +1,85 @@
+{
+  "pipeline_id": "lr_meta",
+  "run": {
+    "work_dir": "/Users/izzydavidson/Desktop/STAMINA-BIOME/outputs",
+    "run_id": "sweep_generic_c009_mhg2",
+    "force_overwrite": 1,
+    "scope": "full"
+  },
+  "technology": "ONT",
+  "specimen": "vaginal",
+  "input": {
+    "style": "FASTQ_SINGLE",
+    "fastq": "/Users/izzydavidson/Desktop/camisim_output/mock_metagenome_generic/nanopore/sample.fastq"
+  },
+  "resources": {
+    "threads": 4
+  },
+  "params": {
+    "common": {
+      "min_qscore": 5,
+      "remove_host": 0,
+      "specimen": "vaginal",
+      "trim_adapter": true,
+      "demultiplex": false
+    },
+    "seq_type": "map-ont"
+  },
+  "tools": {
+    "qfilter": {
+      "enabled": 1,
+      "min_q": 5,
+      "min_len": 1000
+    },
+    "kraken2": {
+      "db": "/Volumes/MyPassport/Kraken/kraken2/core_nt/_old_build_20260116_060100",
+      "vaginal": {
+        "confidence": 0.09,
+        "minimum_hit_groups": 2
+      },
+      "nonvaginal": {
+        "confidence": 0.09,
+        "minimum_hit_groups": 2
+      }
+    },
+    "bracken": {
+      "vaginal": {
+        "enabled": 1,
+        "readlen": 1200
+      },
+      "nonvaginal": {
+        "enabled": 0,
+        "readlen": 1200
+      }
+    },
+    "minimap2": {
+      "human_mmi": "/Users/izzydavidson/Desktop/STAMINA-BIOME/main/data/reference/human/grch38/GRCh38.primary_assembly.genome.lowmem.mmi",
+      "split_prefix": 0
+    }
+  },
+  "output": {
+    "selected": [
+      "raw_csv",
+      "pie_chart",
+      "heatmap",
+      "stacked_bar",
+      "quality_reports"
+    ]
+  },
+  "postprocess": {
+    "enabled": 1,
+    "steps": {
+      "heatmap": 1,
+      "piechart": 1,
+      "stacked_bar": 1,
+      "results_csv": 1,
+      "relative_abundance": 0,
+      "valencia": 1
+    }
+  },
+  "valencia": {
+    "enabled": 1,
+    "mode": "auto",
+    "centroids_csv": "/Users/izzydavidson/Desktop/STAMINA-BIOME/tools/VALENCIA/CST_centroids_012920.csv"
+  }
+}

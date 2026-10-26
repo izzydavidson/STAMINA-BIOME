@@ -1,0 +1,143 @@
+accession	species	taxid	source	notes
+# ── CAMISIM simulation genomes ───────────────────────────────────────────────
+GCF_014131755.1	Bacteroides thetaiotaomicron	818	camisim_simulation
+GCF_000154385.1	Faecalibacterium prausnitzii	853	camisim_simulation
+GCF_012932365.1	Bifidobacterium longum	1678	camisim_simulation
+GCF_009731575.1	Akkermansia muciniphila	239935	camisim_simulation
+GCF_000008865.2	Escherichia coli	562	camisim_simulation
+GCF_000014425.1	Lacticaseibacillus rhamnosus	47715	camisim_simulation
+GCF_025147765.1	Roseburia intestinalis	166486	camisim_simulation
+GCF_016027375.1	Clostridioides difficile	1496	camisim_simulation
+GCF_000025985.1	Bacteroides fragilis	817	camisim_simulation
+GCF_020735445.1	Prevotella copri	165179	camisim_simulation
+GCF_900537995.1	Mediterraneibacter gnavus	33038	camisim_simulation
+GCF_025998455.1	Helicobacter pylori	210	camisim_simulation
+# ── Additional NCBI RefSeq strains (added to improve per-species recall) ──────
+GCF_022453665.1	Bacteroides thetaiotaomicron	818	ncbi_additional	Low recall in v4 validation sweep
+GCF_019857385.1	Bacteroides thetaiotaomicron	818	ncbi_additional	Low recall in v4 validation sweep
+GCF_019896115.1	Bacteroides thetaiotaomicron	818	ncbi_additional	Low recall in v4 validation sweep
+GCF_003050665.1	Helicobacter pylori	210	ncbi_additional	Low recall in v4 validation sweep
+GCF_004295525.1	Helicobacter pylori	210	ncbi_additional	Low recall in v4 validation sweep
+GCF_900478295.1	Helicobacter pylori	210	ncbi_additional	Low recall in v4 validation sweep
+GCF_040050875.1	Lactobacillus gasseri	1596	ncbi_additional	Low recall in v4 validation sweep
+GCF_002158885.1	Lactobacillus gasseri	1596	ncbi_additional	Low recall in v4 validation sweep
+GCF_013363915.1	Lactobacillus gasseri	1596	ncbi_additional	Low recall in v4 validation sweep
+GCF_017840575.1	Lactobacillus gasseri	1596	ncbi_additional	Low recall in v4 validation sweep
+
+# ── expand_all_sites.py additions (2026-07-09) ─────────────────────────────────
+GCF_900445495.1	Parabacteroides merdae	46503	ncbi_expand	Gut commensal
+GCF_018279895.1	Parabacteroides distasonis	823	ncbi_expand	Gut commensal; bile resistance
+GCF_000154525.1	Bacteroides stercoris	46506	ncbi_expand	Common gut Bacteroides
+GCF_025146565.1	Bacteroides eggerthii	28111	ncbi_expand	Common gut Bacteroides
+GCF_001314995.1	Bacteroides ovatus	28116	ncbi_expand	Major gut symbiont; hemicellulose
+GCF_000012825.1	Phocaeicola vulgatus	821	ncbi_expand	Was Bacteroides vulgatus; reclassified 2020; one of most abundant gut bacteria
+GCF_018292205.1	Bacteroides caccae	47678	ncbi_expand	Common gut Bacteroides
+GCF_000154465.1	Alistipes putredinis	28117	ncbi_expand	Gut commensal; amino acid fermentation
+GCF_027677115.1	Alistipes finegoldii	214856	ncbi_expand	Gut commensal
+GCF_928721825.1	Ruminococcus bromii	40518	ncbi_expand	Key resistant starch degrader; 'keystone'
+GCF_025145845.1	Alistipes shahii	328814	ncbi_expand	Gut commensal
+GCF_044591705.1	Mediterraneibacter torques	33039	ncbi_expand	Was Ruminococcus torques; mucin degrader; reclassified 2020
+GCF_022453685.1	Agathobacter rectalis	39491	ncbi_expand	Was Eubacterium rectale; major butyrate producer; 5-10% gut bacteria
+GCF_018140635.1	Anaerobutyricum hallii	39488	ncbi_expand	Was Eubacterium hallii; butyrate producer; acetate crossfeeder
+GCF_025150745.1	Eubacterium ventriosum	39496	ncbi_expand	Gut commensal
+GCF_019734885.1	Pseudocoprococcus catus	116085	ncbi_expand	Was Coprococcus catus; reclassified 2020; butyrate producer; mental health link
+GCF_025150085.1	Dorea longicatena	88431	ncbi_expand	Common gut commensal
+GCF_025150245.1	Dorea formicigenerans	39486	ncbi_expand	Gut commensal
+GCF_000225345.1	Roseburia hominis	301301	ncbi_expand	Butyrate producer; motile
+GCF_025148125.1	Blautia wexlerae	418240	ncbi_expand	Positively associated with gut health
+GCF_020731525.1	Roseburia inulinivorans	360807	ncbi_expand	Inulin/starch fermentation
+GCF_002243135.1	Finegoldia magna	1260	ncbi_expand	Obligate anaerobe; gut commensal
+GCF_000196555.1	Bifidobacterium longum	216816	ncbi_expand	In CAMISIM; dominant adult probiotic sp.
+GCF_000010425.1	Bifidobacterium adolescentis	1680	ncbi_expand	Dominant adult Bifidobacterium
+GCF_001025175.1	Bifidobacterium breve	1685	ncbi_expand	Dominant infant gut; probiotic
+GCF_001025135.1	Bifidobacterium bifidum	1681	ncbi_expand	HMO degrader; infant gut
+GCF_044361425.1	Bacteroides uniformis	820	ncbi_expand	Major gut symbiont; fibre fermentation
+GCF_000022965.1	Bifidobacterium animalis	28025	ncbi_expand	Commercial probiotic; ssp. lactis
+GCF_001025155.1	Bifidobacterium angulatum	1683	ncbi_expand	Adult gut commensal
+GCF_000016525.1	Methanobrevibacter smithii	2173	ncbi_expand	Dominant gut archaeon; H2 consumption
+GCF_009913655.1	Lactiplantibacillus plantarum	1590	ncbi_expand	Fermented foods; gut health
+GCF_000012545.1	Methanosphaera stadtmanae	2317	ncbi_expand	Gut archaeon; methanol utilisation
+GCF_000252995.1	Salmonella bongori	54736	ncbi_expand	Non-typhoidal Salmonella; poultry-associated
+GCF_000006945.2	Salmonella enterica	28901	ncbi_expand	Non-typhoidal salmonellosis; food poisoning
+GCF_000006925.2	Shigella flexneri	623	ncbi_expand	Dysentery; faecal-oral transmission
+GCF_002950395.1	Shigella sonnei	624	ncbi_expand	Most common Shigella in developed countries
+GCF_022354085.1	Shigella dysenteriae	622	ncbi_expand	Severe dysentery; Shiga toxin
+GCF_000009085.1	Campylobacter jejuni	197	ncbi_expand	Most common bacterial food poisoning globally
+GCF_009730395.1	Campylobacter coli	195	ncbi_expand	Foodborne illness; poultry-associated
+GCF_000063585.1	Clostridium botulinum	1491	ncbi_expand	Botulism toxin; food/wound/infant
+GCF_000393015.1	Enterococcus faecalis	1351	ncbi_expand	VRE risk; gut commensal + opportunistic
+GCF_009734005.1	Enterococcus faecium	1352	ncbi_expand	VRE — most clinically resistant Enterococcus
+GCF_016027375.1	Clostridium perfringens	1502	ncbi_expand	Gas gangrene; food poisoning Type A/C
+GCF_900637475.1	Yersinia pseudotuberculosis	633	ncbi_expand	Foodborne illness; Far East scarlet fever
+GCF_000253175.1	Yersinia enterocolitica	630	ncbi_expand	Yersiniosis; cold-chain foodborne
+GCF_000196095.1	Vibrio parahaemolyticus	670	ncbi_expand	Seafood-associated gastroenteritis
+GCF_000196035.1	Listeria monocytogenes	1639	ncbi_expand	Listeriosis; fatal in pregnancy/immunocomp
+GCF_003019295.1	Fusobacterium nucleatum	851	ncbi_expand	Colorectal cancer; gut coloniser
+GCF_001650295.1	Escherichia coli O157	1045010	ncbi_expand	EHEC; Shiga toxin; haemolytic uremic syndrome
+GCF_000014805.1	Aeromonas hydrophila	644	ncbi_expand	Waterborne gastroenteritis; wound infections
+GCF_000240185.1	Klebsiella pneumoniae	573	ncbi_expand	Gut opportunist; ESKAPE pathogen
+GCF_000014025.1	Arcobacter butzleri	28197	ncbi_expand	Emerging enteropathogen; water/poultry
+GCF_000006765.1	Pseudomonas aeruginosa	287	ncbi_expand	Gut opportunist in ICU/immunocomp
+GCF_900476005.1	Aeromonas caviae	648	ncbi_expand	Gastroenteritis; especially in children
+GCF_030864025.1	Anaerostipes hadrus	649756	ncbi_expand	Major butyrate/lactate crossfeeder; abundant in HMP
+GCF_020181435.1	Anaerostipes caccae	105841	ncbi_expand	Butyrate producer from lactate; Lachnospiraceae
+GCF_025152575.1	Subdoligranulum variabile	214851	ncbi_expand	Butyrate producer; abundant HMP Clostridiales
+GCF_008151785.1	Peptacetobacter hiranonis	89152	ncbi_expand	Was Clostridium hiranonis; key 7α-dehydroxylation secondary bile acid producer
+GCF_965585535.1	Dysosmobacter welbionis	2093857	ncbi_expand	Potent butyrate producer; described 2020; gut health biomarker
+GCF_021531915.1	Oscillibacter valericigenes	351091	ncbi_expand	Valerate and butyrate producer; common HMP gut isolate
+GCF_010669205.1	Blautia producta	33035	ncbi_expand	Major H2-consuming acetogen; common Lachnospiraceae
+GCF_045061065.1	Roseburia faecis	301302	ncbi_expand	Butyrate producer; Roseburia sp.; flagellated motility
+GCF_006542645.1	Alistipes onderdonkii	328813	ncbi_expand	Common gut Alistipes; amino acid fermentation
+GCF_008369605.1	Vibrio cholerae	666	ncbi_expand	Cholera; pandemic risk
+GCF_002160355.1	Butyricicoccus pullicaecorum	501571	ncbi_expand	Butyrate producer; human and poultry gut
+GCF_018292125.1	Bacteroides cellulosilyticus	246787	ncbi_expand	Major cellulose/hemicellulose degrader; WH2 reference
+GCF_000172175.1	Bacteroides intestinalis	329854	ncbi_expand	Common gut Bacteroides; HMP isolate
+GCF_025149285.1	Hungatella hathewayi	154046	ncbi_expand	Lachnospiraceae; common gut commensal; CDI association
+GCF_900167555.1	Gemmiger formicilis	745368	ncbi_expand	Ruminococcaceae; gut commensal; HMP abundant
+GCF_000424105.1	Lachnospira multipara	28051	ncbi_expand	Pectin-fermenting Lachnospiraceae; infant gut
+GCF_025146135.1	Anaerotruncus colihominis	169435	ncbi_expand	Butyrate producer; DSM 17322 type strain
+GCF_010509075.1	Collinsella aerofaciens	74426	ncbi_expand	Most abundant gut Coriobacteriia; bile acid + H2 metabolism
+GCF_021378605.1	Eggerthella lenta	84112	ncbi_expand	Cardiac glycoside (digoxin) inactivation; common gut isolate
+GCF_010508875.1	Flavonifractor plautii	292800	ncbi_expand	Flavonoid/polyphenol catabolism; gut commensal
+GCF_003628755.1	Christensenella minuta	626937	ncbi_expand	Highly heritable; leanness biomarker; BMI association
+GCF_000160055.1	Dialister invisus	218538	ncbi_expand	Gut Veillonellaceae; common in HMP and UHGG
+GCF_003945365.1	Phascolarctobacterium faecium	33025	ncbi_expand	Propionate producer; Veillonellaceae; succinate-utilising
+GCF_027667425.1	Fusicatenibacter saccharivorans	1150298	ncbi_expand	Lachnospiraceae; highly abundant in healthy adult gut
+GCF_034298135.1	Lactobacillus acidophilus	1579	ncbi_expand	Classic probiotic; NCBI taxid 1579; acid-tolerant; yoghurt
+GCF_014058685.1	Lactobacillus johnsonii	33959	ncbi_expand	Gut mucosal Lactobacillus; NCC533 reference genome
+GCF_034356035.1	Blautia hydrogenotrophica	53443	ncbi_expand	H2-consuming acetogen; gut commensal
+GCF_000829055.1	Lacticaseibacillus casei	1582	ncbi_expand	Probiotic; widely in gut; NCBI taxid 1582
+GCF_000526995.1	Lacrimispora indolis	69825	ncbi_expand	Was Clostridium clostridioforme complex; common gut isolate
+GCF_001025215.1	Bifidobacterium pseudocatenulatum	28026	ncbi_expand	Common adult gut Bifidobacterium; butyrate crossfeeder
+GCF_001025195.1	Bifidobacterium catenulatum	1686	ncbi_expand	Adult gut Bifidobacterium; NCBI taxid 1686
+GCF_000155515.2	Lacticaseibacillus paracasei	1597	ncbi_expand	Gut commensal; probiotic strains; NCBI taxid 1597
+GCF_001042595.1	Bifidobacterium dentium	1689	ncbi_expand	Oral-origin Bifidobacterium; rare in healthy gut
+GCF_004295125.1	Clostridium scindens	29347	ncbi_expand	Secondary bile acid producer; 7α-dehydroxylation; CDI resistance
+GCF_016728785.1	Thomasclavelia ramosa	1547	ncbi_expand	Was Ruminococcus gnavus complex; NCBI taxid 1547
+GCF_025148965.1	Intestinibacter bartlettii	261299	ncbi_expand	Gut Peptostreptococcaceae; CDI-associated; NCBI taxid 261299
+GCF_900186885.1	Veillonella parvula	29466	ncbi_expand	Gut Veillonella; lactate consumer; propionate producer
+GCF_041431435.1	Veillonella atypica	39777	ncbi_expand	Gut Veillonella; common HMP isolate; lactate crossfeeder
+GCF_928721695.1	Dialister succinatiphilus	487173	ncbi_expand	Gut Veillonellaceae; succinate-consuming; HMP isolate
+GCF_012317185.1	Clostridium innocuum	1522	ncbi_expand	Gut Clostridiales; enriched in IBD and CDI patients
+GCF_023497905.1	Phascolarctobacterium succinatutens	626940	ncbi_expand	Succinate-to-propionate; gut Veillonellaceae; HMP
+GCF_000146185.1	Lachnospira eligens	39485	ncbi_expand	Pectin-fermenting Lachnospiraceae; infant and adult gut
+GCF_009697165.1	Anaerobutyricum soehngenii	105843	ncbi_expand	Was Eubacterium soehngenii; butyrate producer; NCBI taxid 105843
+GCF_000156655.1	Holdemanella biformis	1735	ncbi_expand	Lachnospiraceae; gut commensal; HMP isolate
+GCF_000210095.1	Ruminococcus champanellensis	1161942	ncbi_expand	Crystalline cellulose degrader; NCBI taxid 1161942
+GCF_037113525.1	Butyrivibrio fibrisolvens	831	ncbi_expand	Fibrolytic butyrate producer; ruminant and human gut
+GCF_000269565.1	Coprobacillus cateniformis	100884	ncbi_expand	Gut Erysipelotrichaceae; common HMP isolate; NCBI taxid 100884
+GCF_000169255.2	Pseudoflavonifractor capillosus	106588	ncbi_expand	Was Ruminococcus capillosus; gut commensal
+GCF_025147765.1	Blautia obeum	40520	ncbi_expand	Was Ruminococcus obeum; gut Blautia; acetate/ethanol from H2
+GCF_000807675.2	Eubacterium limosum	1736	ncbi_expand	Acetogen; methanol/CO2 utiliser; gut anaerobe
+GCF_000478885.1	Adlercreutzia equolifaciens	446660	ncbi_expand	Equol producer from daidzein; Coriobacteriia; gut commensal
+GCF_025149625.1	Collinsella stercoris	147206	ncbi_expand	Gut Coriobacteriia; bile acid transformation
+GCF_000205025.1	Parasutterella excrementihominis	487175	ncbi_expand	Gut Burkholderiaceae; NCBI taxid 487175; common HMP commensal
+GCF_013046825.1	Turicibacter sanguinis	154288	ncbi_expand	Gut Erysipelotrichaceae; serotonin and bile acid metabolism
+GCF_000296465.1	Barnesiella intestinihominis	487174	ncbi_expand	Gut Bacteroidota; NCBI taxid 487174; HMP isolate
+GCF_019930665.1	Bacteroides nordii	291645	ncbi_expand	Gut Bacteroides; NCBI taxid 291645; HMP isolate
+GCF_025144995.1	Alistipes indistinctus	626932	ncbi_expand	Gut Alistipes; NCBI taxid 626932; UHGG abundant
+GCF_025151045.1	Parabacteroides johnsonii	387661	ncbi_expand	Gut Parabacteroides; NCBI taxid 387661; HMP isolate
+GCF_000308215.1	Methanomassiliicoccus luminyensis	1080712	ncbi_expand	Gut methanogen; H2-using; NCBI taxid 1080712
+GCF_001042635.1	Bifidobacterium scardovii	158787	ncbi_expand	Rare gut Bifidobacterium; occasionally isolated from human feces
+GCF_900097105.1	Akkermansia glycaniphila	1679444	ncbi_expand	Mucin-degrading Akkermansia; distinct from A. muciniphila
+GCF_020091425.1	Parabacteroides goldsteinii	328812	ncbi_expand	Gut Parabacteroides; NCBI taxid 328812; HMP isolate

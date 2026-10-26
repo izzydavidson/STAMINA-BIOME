@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+import argparse
+import json
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+
+SR_AMP_DEFAULT_CONFIG: Dict[str, Any] = {
+  "pipeline_id": "sr_amp",
+  "technology": "ILLUMINA",
+  "specimen": "other",
+  "sample_type": "other",
+  "run": {
+    "work_dir": "",
+    "run_id": "",
+    "force_overwrite": 1
+  },
+  "input": {
+    "style": "FASTQ_PAIRED",
+    "fastq_r1": "data/test_inputs/ERR10233589_1.fastq.gz",
+    "fastq_r2": "data/test_inputs/ERR10233589_2.fastq.gz"
+  },
+  "resources": {
+    "threads": 8
+  },
+  "params": {
+    "common": {
+      "min_qscore": 10,
+      "remove_host": 0
+    }
+  },
+  "qiime2": {
+    "sample_id": "barcode01",
+    "primers": {
+      "forward": "",
+      "reverse": ""
+    },
+    "classifier": {
+      "qza": "data/reference/qiime2/silva-138-99-nb-classifier.qza"
+    },
+    "dada2": {
+      "trim_left_f": 0,
+      "trim_left_r": 0,
+      "trunc_len_f": 270,
+      "trunc_len_r": 220,
+      "n_threads": 1
+    },
+    "diversity": {
+      "sampling_depth": 0,
+      "metadata_tsv": ""
+    }
+  },
+  "valencia": {
+    "enabled": 1,
+    "repo_dir": "tools/VALENCIA",
+    "script": "Valencia.py",
+    "python_bin": "python3",
+    "centroids_csv": "tools/VALENCIA/CST_centroids_012920.csv",
+    "output_dirname": "valencia",
+    "mode": "auto"
+  },
+  "output": {
+    "selected": [
+      "default"
+    ]
+  }
+}
+
+
+def _abs_work_dir(work_dir: Optional[str]) -> str:
+    if work_dir and work_dir.strip():
+        return str(Path(work_dir).expanduser().resolve())
+    return str(Path.cwd().resolve())
+
+
+def _ensure_dir(path: str) -> None:
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def _write_json(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _load_json_if_exists(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _deep_copy_jsonable(obj: Dict[str, Any]) -> Dict[str, Any]:
+    # Safe deep copy for JSON-able dicts
+    return json.loads(json.dumps(obj))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="stamina-biome")
+    subparsers = parser.add_subparsers(dest="command")
+    subparsers.required = True
+
+    run_p = subparsers.add_parser("run", help="Prepare (update/write) a config for a pipeline")
+    run_p.add_argument("--pipeline", required=True, choices=["sr_amp"], help="Pipeline id (only sr_amp for now)")
+    run_p.add_argument(
+        "--work-dir",
+        default=None,
+        help="Output work directory. If omitted, uses the current directory where stamina-biome is run."
+    )
+    run_p.add_argument(
+        "--config-out",
+        default=None,
+        help="Where to write the updated config JSON. Default: <work_dir>/stamina_biome_configs/<pipeline>.json"
+    )
+
+    args = parser.parse_args()
+
+    if args.command != "run":
+        parser.error("Only 'run' is implemented right now")
+
+    if args.pipeline != "sr_amp":
+        parser.error("Only --pipeline sr_amp is supported right now")
+
+    work_dir = _abs_work_dir(args.work_dir)
+    _ensure_dir(work_dir)
+
+    if args.config_out:
+        config_path = Path(args.config_out).expanduser().resolve()
+    else:
+        config_path = Path(work_dir) / "stamina_biome_configs" / "{}.json".format(args.pipeline)
+
+    existing = _load_json_if_exists(config_path)
+    if existing is None:
+        cfg = _deep_copy_jsonable(SR_AMP_DEFAULT_CONFIG)
+        existed = False
+    else:
+        cfg = existing
+        existed = True
+
+    cfg["pipeline_id"] = "sr_amp"
+    if "run" not in cfg or not isinstance(cfg["run"], dict):
+        cfg["run"] = {}
+    cfg["run"]["work_dir"] = work_dir
+
+    _write_json(config_path, cfg)
+
+    print("[stamina-biome] pipeline: {}".format(args.pipeline))
+    print("[stamina-biome] work_dir:  {}".format(work_dir))
+    print("[stamina-biome] wrote:     {}".format(str(config_path)))
+    print("[stamina-biome] existed:   {}".format("yes" if existed else "no (created from defaults)"))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

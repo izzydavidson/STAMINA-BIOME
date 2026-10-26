@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Docker wrapper for MultiQC
+# Runs MultiQC inside a container with proper volume mounts
+
+set -euo pipefail
+
+MULTIQC_IMAGE="${STAMINA_BIOME_MULTIQC_IMAGE:-ewels/multiqc:latest}"
+
+# Parse arguments to find input directory and output directory
+ARGS=()
+OUTPUT_DIR=""
+INPUT_DIR=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--outdir)
+            OUTPUT_DIR="$2"
+            ARGS+=("-o" "/output")
+            shift 2
+            ;;
+        -*)
+            ARGS+=("$1")
+            shift
+            ;;
+        *)
+            # This is the input directory
+            if [[ -z "${INPUT_DIR}" ]]; then
+                INPUT_DIR="$1"
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "${INPUT_DIR}" ]]; then
+    echo "ERROR: No input directory provided" >&2
+    exit 1
+fi
+
+if [[ -z "${OUTPUT_DIR}" ]]; then
+    OUTPUT_DIR="."
+fi
+
+# Resolve to absolute paths
+INPUT_DIR="$(cd "${INPUT_DIR}" && pwd)"
+mkdir -p "${OUTPUT_DIR}"
+OUTPUT_DIR="$(cd "${OUTPUT_DIR}" && pwd)"
+
+# Build docker command
+DOCKER_CMD=(
+    docker run --rm --platform=linux/amd64
+    -v "${INPUT_DIR}:/input:ro"
+    -v "${OUTPUT_DIR}:/output:rw"
+    "${MULTIQC_IMAGE}"
+    multiqc "${ARGS[@]}" /input
+)
+
+# Execute
+exec "${DOCKER_CMD[@]}"
