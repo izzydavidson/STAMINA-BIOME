@@ -543,8 +543,12 @@ if [[ "${PIPELINE_KEY}" == "sr_meta" ]]; then
     KRAKEN2_DB_HOST_PATH="${KRAKEN_DB_CLASSIFY_CLI}"
   fi
 
+  # Mixed-site runs may give only per-site DBs (tools.kraken2.db_by_site)
+  SR_HAS_SITE_DBS="$(jq -r '((.tools.kraken2.db_by_site // {}) | if type == "object" then length else 0 end) > 0' "${CONFIG_ABS}" 2>/dev/null || echo false)"
+  if [[ -z "${KRAKEN2_DB_HOST_PATH}" && "${SR_HAS_SITE_DBS}" == "true" ]]; then
+    echo "[sr_meta] No global Kraken2 DB; using per-site DBs (tools.kraken2.db_by_site)"
   # Validate required resources
-  if [[ -z "${KRAKEN2_DB_HOST_PATH}" ]]; then
+  elif [[ -z "${KRAKEN2_DB_HOST_PATH}" ]]; then
     cat >&2 <<EOF
 ERROR: No Kraken2 database specified for sr_meta.
 
@@ -568,13 +572,17 @@ EOF
 
   # Validate Kraken2 DB path
   echo "[sr_meta] Validating resources..."
-  if ! validate_host_path_exists "${KRAKEN2_DB_HOST_PATH}" "Kraken2 database" "directory"; then
-    exit 4
+  if [[ -n "${KRAKEN2_DB_HOST_PATH}" ]]; then
+    if ! validate_host_path_exists "${KRAKEN2_DB_HOST_PATH}" "Kraken2 database" "directory"; then
+      exit 4
+    fi
+    if ! check_external_volume_sharing "${KRAKEN2_DB_HOST_PATH}" "Kraken2 database"; then
+      exit 4
+    fi
+    echo "[sr_meta] Kraken2 DB: ${KRAKEN2_DB_HOST_PATH} -> ${KRAKEN2_DB_CONTAINER_PATH}"
+  else
+    KRAKEN2_DB_CONTAINER_PATH=""
   fi
-  if ! check_external_volume_sharing "${KRAKEN2_DB_HOST_PATH}" "Kraken2 database"; then
-    exit 4
-  fi
-  echo "[sr_meta] Kraken2 DB: ${KRAKEN2_DB_HOST_PATH} -> ${KRAKEN2_DB_CONTAINER_PATH}"
 
   # Validate minimap2 human reference if host removal is enabled
   if [[ "${HOST_REMOVAL_ENABLED}" == "1" && "${DISABLE_HOST_REMOVAL}" != "1" ]]; then
@@ -644,6 +652,46 @@ EOF
 fi
 
 # -----------------------------
+# -----------------------------
+# Mixed-site runs: per-site Kraken2 DBs + optional comparison DB
+# Each DB is mounted read-only at /refs/kraken2_db_<site> (comparison:
+# /refs/kraken2_db_comparison) and the config paths are rewritten to match.
+# -----------------------------
+SITE_DB_MOUNTS=()          # "host_path|container_path"
+SITE_DB_CONTAINER_MAP='{}' # {site: container_path}
+COMPARISON_DB_HOST_PATH=""
+COMPARISON_DB_CONTAINER_PATH=""
+if [[ "${PIPELINE_KEY}" == "lr_meta" || "${PIPELINE_KEY}" == "sr_meta" ]]; then
+  while IFS=$'\t' read -r _site _host; do
+    [[ -n "${_site}" && -n "${_host}" && "${_host}" != "null" ]] || continue
+    if ! validate_host_path_exists "${_host}" "Kraken2 database (${_site})" "directory"; then
+      exit 4
+    fi
+    if ! check_external_volume_sharing "${_host}" "Kraken2 database (${_site})"; then
+      exit 4
+    fi
+    _safe="$(printf '%s' "${_site}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_')"
+    _cpath="/refs/kraken2_db_${_safe}"
+    SITE_DB_MOUNTS+=( "${_host}|${_cpath}" )
+    SITE_DB_CONTAINER_MAP="$(jq -c --arg s "${_site}" --arg p "${_cpath}" '. + {($s): $p}' <<< "${SITE_DB_CONTAINER_MAP}")"
+    echo "[${PIPELINE_KEY}] Kraken2 DB (${_site}): ${_host} -> ${_cpath}"
+  done < <(jq -r '(.tools.kraken2.db_by_site // {}) | if type == "object" then to_entries[] | [.key, (.value|tostring)] | @tsv else empty end' "${CONFIG_ABS}" 2>/dev/null || true)
+
+  COMPARISON_DB_HOST_PATH="$(jq -r '.tools.kraken2.comparison_db // empty' "${CONFIG_ABS}" | tr -d '\r\n')"
+  if [[ -n "${COMPARISON_DB_HOST_PATH}" && "${COMPARISON_DB_HOST_PATH}" != "null" ]]; then
+    if ! validate_host_path_exists "${COMPARISON_DB_HOST_PATH}" "Comparison Kraken2 database" "directory"; then
+      exit 4
+    fi
+    if ! check_external_volume_sharing "${COMPARISON_DB_HOST_PATH}" "Comparison Kraken2 database"; then
+      exit 4
+    fi
+    COMPARISON_DB_CONTAINER_PATH="/refs/kraken2_db_comparison"
+    echo "[${PIPELINE_KEY}] Comparison Kraken2 DB: ${COMPARISON_DB_HOST_PATH} -> ${COMPARISON_DB_CONTAINER_PATH}"
+  else
+    COMPARISON_DB_HOST_PATH=""
+  fi
+fi
+
 # Build pipeline image (after validations)
 # -----------------------------
 if [[ "${REBUILD}" == "1" ]] || ! image_exists "${IMAGE_NAME}"; then
@@ -1302,8 +1350,8 @@ elif [[ "${PIPELINE_KEY}" == "sr_meta" ]]; then
     # Set Kraken2 DB paths to container path
     | .tools = (.tools // {})
     | .tools.kraken2 = ((.tools.kraken2 // {}) | if type == "object" then . else {} end)
-    | .tools.kraken2.db = $kraken2_db_path
-    | .tools.kraken2.db_classify = $kraken2_db_path
+    | .tools.kraken2.db = (if ($kraken2_db_path | length) > 0 then $kraken2_db_path else "" end)
+    | .tools.kraken2.db_classify = (if ($kraken2_db_path | length) > 0 then $kraken2_db_path else "" end)
 
     # Set minimap2 human_mmi path
     | if ($minimap2_mmi_path | length) > 0 then
@@ -1483,7 +1531,7 @@ elif [[ "${PIPELINE_KEY}" == "lr_meta" || "${PIPELINE_KEY}" == "lr_amp" ]]; then
 
   jq \
     --arg repo_root "${REPO_ROOT}" \
-    --arg kraken2_db_path "${LR_KRAKEN2_DB_CONTAINER_PATH}" \
+    --arg kraken2_db_path "$( [[ -n "${LR_KRAKEN2_DB_HOST_PATH}" ]] && echo "${LR_KRAKEN2_DB_CONTAINER_PATH}" )" \
     --arg minimap2_mmi_path "${LR_MINIMAP2_MMI_INJECT_VALUE}" \
     --argjson disable_host_removal "$( [[ "${DISABLE_HOST_REMOVAL}" == "1" ]] && echo true || echo false )" \
     --argjson lowmem_mode "$( [[ "${LR_META_LOWMEM_MODE}" == "1" ]] && echo true || echo false )" \
@@ -1740,9 +1788,134 @@ HOST_UID="$(id -u || true)"
 HOST_GID="$(id -g || true)"
 HOST_HOME="${HOME}"
 
+if [[ "${SITE_DB_CONTAINER_MAP}" != "{}" || -n "${COMPARISON_DB_CONTAINER_PATH}" ]]; then
+  _tmp_site_cfg="$(mktemp "${TMP_DIR}/config_sites.XXXXXX")"
+  jq --argjson site_dbs "${SITE_DB_CONTAINER_MAP}" --arg comp "${COMPARISON_DB_CONTAINER_PATH}" '
+    .tools = (.tools // {})
+    | .tools.kraken2 = ((.tools.kraken2 // {}) | if type == "object" then . else {} end)
+    | if ($site_dbs | length) > 0 then .tools.kraken2.db_by_site = ((.tools.kraken2.db_by_site // {}) + $site_dbs) else . end
+    | if ($comp | length) > 0 then .tools.kraken2.comparison_db = $comp else . end
+  ' "${TMP_CONFIG}" > "${_tmp_site_cfg}"
+  mv "${_tmp_site_cfg}" "${TMP_CONFIG}"
+fi
+
+# -----------------------------
+# lr_meta/lr_amp: host GPU basecalling (Apple silicon)
+# Dorado in the Linux container can only use the CPU, which takes days for a full
+# run. On macOS arm64 with the native Dorado build installed (tools/dorado-*-host),
+# basecall POD5/FAST5 input on the Apple GPU (--device metal) here first and hand
+# the container the basecalled BAM: it then runs the usual BAM route (dorado
+# demux -> trim -> per-barcode FASTQ). Disable with STAMINA_BIOME_HOST_BASECALL=0
+# or tools.dorado.host_basecall=false to keep in-container CPU basecalling.
+# -----------------------------
+HOST_BASECALL_BAM=""
+_input_style_cfg="$(jq -r '.input.style // empty' "${TMP_CONFIG}" | tr '[:lower:]' '[:upper:]')"
+_host_bc_cfg="$(jq -r 'if .tools.dorado.host_basecall == false then "0" else "1" end' "${TMP_CONFIG}" 2>/dev/null || echo 1)"
+if [[ ( "${PIPELINE_KEY}" == "lr_meta" || "${PIPELINE_KEY}" == "lr_amp" ) \
+      && ( "${_input_style_cfg}" == "FAST5_DIR" || "${_input_style_cfg}" == "FAST5" ) \
+      && "${HOST_OS}" == "Darwin" && "$(uname -m)" == "arm64" \
+      && "${STAMINA_BIOME_HOST_BASECALL:-1}" != "0" && "${_host_bc_cfg}" == "1" ]]; then
+  _tools_root="$(dirname "${REPO_ROOT}")/tools"
+  HOST_DORADO=""
+  for _cand in $(ls -d "${_tools_root}"/dorado-*-host "${_tools_root}"/dorado-host 2>/dev/null | sort -rV); do
+    if [[ -x "${_cand}/bin/dorado" ]]; then HOST_DORADO="${_cand}/bin/dorado"; break; fi
+  done
+
+  if [[ -z "${HOST_DORADO}" ]]; then
+    echo "[basecall] No native macOS Dorado under ${_tools_root}/dorado-*-host - basecalling on CPU inside the container (slow)."
+  else
+    _raw_dir="$(jq -r '.input.fast5_dir // .input.fast5 // empty' "${TMP_CONFIG}")"
+    _model="$(jq -r '.tools.dorado.model // empty' "${TMP_CONFIG}")"
+    _models_dir="${DORADO_MODEL_DIR:-$(dirname "${REPO_ROOT}")/tools/models/dorado}"
+    _work_dir="$(jq -r '.run.work_dir // empty' "${TMP_CONFIG}")"
+    _run_id="$(jq -r '.run.run_id // .run_id // empty' "${TMP_CONFIG}" | tr -cd 'A-Za-z0-9_.-')"
+    [[ -n "${_raw_dir}" && -d "${_raw_dir}" ]] || die "Raw signal input directory not found: ${_raw_dir}"
+    [[ -n "${_model}" ]] || die "Missing dorado model: set tools.dorado.model"
+    [[ -n "${_work_dir}" && -n "${_run_id}" ]] || die "Cannot place basecalled output: run.work_dir / run.run_id missing"
+
+    # Outside the run directory: stamina_biome_run.sh clears <work_dir>/<run_id> on force_overwrite
+    BASECALL_DIR="${_work_dir}/basecalled_${_run_id}"
+    mkdir -p "${BASECALL_DIR}"
+    _bc_log="${BASECALL_DIR}/dorado_basecaller.log"
+
+    # Image-side helper run (pod5 tool + shared tools.sh): FAST5 -> POD5 if needed,
+    # then pick the model that matches the data's sample rate
+    _helper() {
+      docker run --rm ${PLATFORM:+--platform "${PLATFORM}"} \
+        -v "/Users:/Users" $( [[ -d /Volumes ]] && echo "-v /Volumes:/Volumes" ) \
+        -v "${REPO_ROOT}:/work:ro" -w /tmp --entrypoint bash "${IMAGE_NAME}" -c "$1" _ "${@:2}"
+    }
+    # POD5 files anywhere under the chosen folder (preferred when MinKNOW also wrote FAST5)
+    _pod5_src="$(_helper 'source /work/pipelines/tools.sh; pod5_dir_if_present "$1" "$2"' \
+      "${_raw_dir}" "${BASECALL_DIR}/pod5_inputs")" || _pod5_src=""
+    if [[ -n "${_pod5_src}" ]]; then
+      [[ "${_pod5_src}" != "${_raw_dir%/}" ]] && echo "[basecall] Using POD5 files found in: ${_pod5_src}"
+    else
+      _converted="${BASECALL_DIR}/converted.pod5"
+      if [[ ! -s "${_converted}" ]]; then
+        echo "[basecall] FAST5 input - converting to POD5: ${_converted}"
+        _helper 'pod5 convert fast5 --recursive "$1" -o "$2.partial" >&2 && mv "$2.partial" "$2"' "${_raw_dir}" "${_converted}" \
+          || die "FAST5 -> POD5 conversion failed"
+      fi
+      _pod5_src="${_converted}"
+    fi
+    _chosen_model="$(_helper 'source /work/pipelines/tools.sh; r="$(pod5_sample_rate "$1" pod5)"; dorado_model_for_data "$2" "$3" "$r"' \
+      "${_pod5_src}" "${_models_dir}" "${_model}")" || _chosen_model="${_model}"
+    if [[ -z "${_chosen_model}" ]]; then
+      die "The data's sample rate does not match ${_model}, and no matching ${_model%@*} model is installed in ${_models_dir}."
+    elif [[ "${_chosen_model}" != "${_model}" ]]; then
+      echo "[basecall] WARNING: ${_model} does not match the data's sample rate - using ${_chosen_model} instead."
+    fi
+    _model_arg="${_chosen_model}"
+    [[ -d "${_models_dir}/${_chosen_model}" ]] && _model_arg="${_models_dir}/${_chosen_model}"
+
+    # With a barcoding kit, classify barcodes during basecalling and trim nothing:
+    # basecaller trimming strips the primer flanks that demux needs to find the barcode
+    _bc_kit="$(jq -r '.tools.dorado.barcode_kit // .dorado.barcode_kit // empty' "${TMP_CONFIG}")"
+    [[ "${_bc_kit}" == "null" ]] && _bc_kit=""
+    _bc_args=()
+    [[ -n "${_bc_kit}" ]] && _bc_args=( --kit-name "${_bc_kit}" --no-trim )
+
+    HOST_BASECALL_BAM="${BASECALL_DIR}/calls.bam"
+    _stamp="${HOST_DORADO}|${_chosen_model}|${_pod5_src}|${_bc_args[*]-}"
+    if [[ -s "${HOST_BASECALL_BAM}" && "$(cat "${BASECALL_DIR}/calls.done" 2>/dev/null)" == "${_stamp}" ]]; then
+      echo "[basecall] Reusing basecalled reads from an earlier run: ${HOST_BASECALL_BAM}"
+    else
+      rm -f "${HOST_BASECALL_BAM}" "${BASECALL_DIR}/calls.done"
+      echo "[basecall] Basecalling on the Apple GPU (native Dorado, --device metal)"
+      echo "[basecall]   dorado: ${HOST_DORADO}"
+      echo "[basecall]   model:  ${_chosen_model}"
+      echo "[basecall]   input:  ${_pod5_src}"
+      [[ -n "${_bc_kit}" ]] && echo "[basecall]   kit:    ${_bc_kit} (barcodes classified, reads not trimmed)"
+      echo "[basecall]   output: ${HOST_BASECALL_BAM}"
+      echo "[basecall]   log:    ${_bc_log}"
+      _bc_started="$(date +%s)"
+      if ! "${HOST_DORADO}" basecaller --device metal ${_bc_args[@]+"${_bc_args[@]}"} "${_model_arg}" "${_pod5_src}" \
+            > "${HOST_BASECALL_BAM}.partial" 2> >(tee "${_bc_log}" >&2); then
+        rm -f "${HOST_BASECALL_BAM}.partial"
+        die "Host GPU basecalling failed - see ${_bc_log}"
+      fi
+      [[ -s "${HOST_BASECALL_BAM}.partial" ]] || die "Host GPU basecalling produced no reads - see ${_bc_log}"
+      mv "${HOST_BASECALL_BAM}.partial" "${HOST_BASECALL_BAM}"
+      printf '%s' "${_stamp}" > "${BASECALL_DIR}/calls.done"
+      echo "[basecall] Basecalling finished in $(( ($(date +%s) - _bc_started) / 60 )) min: ${HOST_BASECALL_BAM}"
+    fi
+
+    # Hand the container the basecalled BAM (barcode demux/trim run as for BAM input)
+    _tmp_bc_cfg="$(mktemp "${TMP_DIR}/config_basecall.XXXXXX")"
+    jq --arg bam "${HOST_BASECALL_BAM}" --arg dorado "${HOST_DORADO}" --arg model "${_chosen_model}" --arg src "${_pod5_src}" '
+      .input.style = "BAM"
+      | .input.bam = $bam
+      | .input.host_basecall = {device: "metal", dorado: $dorado, model: $model, source: $src}
+    ' "${TMP_CONFIG}" > "${_tmp_bc_cfg}"
+    mv "${_tmp_bc_cfg}" "${TMP_CONFIG}"
+  fi
+fi
+
 DOCKER_ARGS=(
   run --rm
   -e STAMINA_BIOME_IN_CONTAINER=1
+  -e STAMINA_BIOME_RESUME="${STAMINA_BIOME_RESUME:-0}"
   -e STAMINA_BIOME_HOST_REPO_ROOT="${REPO_ROOT}"
   -e STAMINA_BIOME_CONTAINER_REPO_ROOT="/work"
   -e STAMINA_BIOME_QC_IMAGE="${QC_IMAGE_NAME}"
@@ -1778,8 +1951,10 @@ fi
 # -----------------------------
 if [[ "${PIPELINE_KEY}" == "sr_meta" ]]; then
   # Mount Kraken2 DB to the container path
-  DOCKER_ARGS+=( -v "${KRAKEN2_DB_HOST_PATH}:${KRAKEN2_DB_CONTAINER_PATH}:ro" )
-  echo "[mount] Kraken2 DB: ${KRAKEN2_DB_HOST_PATH} -> ${KRAKEN2_DB_CONTAINER_PATH} (ro)"
+  if [[ -n "${KRAKEN2_DB_HOST_PATH}" ]]; then
+    DOCKER_ARGS+=( -v "${KRAKEN2_DB_HOST_PATH}:${KRAKEN2_DB_CONTAINER_PATH}:ro" )
+    echo "[mount] Kraken2 DB: ${KRAKEN2_DB_HOST_PATH} -> ${KRAKEN2_DB_CONTAINER_PATH} (ro)"
+  fi
 
   # Mount minimap2 human reference if configured
   if [[ -n "${MINIMAP2_HUMAN_REF_HOST_PATH}" ]]; then
@@ -1812,6 +1987,16 @@ if [[ "${PIPELINE_KEY}" == "sr_meta" ]]; then
     echo "[container] Resource limits: memory=8GB, swap=10GB, cpus=4"
   fi
   # Full/split4G indices: no explicit limits (use all available)
+fi
+
+# Per-site + comparison Kraken2 DB mounts (mixed-site runs)
+for _m in "${SITE_DB_MOUNTS[@]+"${SITE_DB_MOUNTS[@]}"}"; do
+  DOCKER_ARGS+=( -v "${_m%%|*}:${_m#*|}:ro" )
+  echo "[mount] Kraken2 DB: ${_m%%|*} -> ${_m#*|} (ro)"
+done
+if [[ -n "${COMPARISON_DB_CONTAINER_PATH}" ]]; then
+  DOCKER_ARGS+=( -v "${COMPARISON_DB_HOST_PATH}:${COMPARISON_DB_CONTAINER_PATH}:ro" )
+  echo "[mount] Comparison Kraken2 DB: ${COMPARISON_DB_HOST_PATH} -> ${COMPARISON_DB_CONTAINER_PATH} (ro)"
 fi
 
 # -----------------------------

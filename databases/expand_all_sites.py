@@ -7,33 +7,55 @@ For each body site this script:
   1. Looks up the best RefSeq genome for each taxid via the NCBI Datasets API
   2. Downloads and decompresses the genome from the NCBI FTP
   3. Rewrites FASTA headers to kraken:taxid format
-  4. Places the file in db/library/added/ ready for kraken2-build --build
-  5. Appends new entries to the site's genome_list.tsv
+  4. Writes the file to a staging dir, <db>/expand_staging/ (NOT library/added/)
+  5. Registers each staged file with `kraken2-build --add-to-library` inside the
+     stamina-biome-tools-lr Docker image, checks that a new prelim_map_*.txt
+     with one entry per FASTA header appeared, then deletes the staged copy
+  6. If <db>/seqid2taxid.map already exists, appends the new seqids to it
+     (kraken2-build --build reuses an existing map and would otherwise ignore
+     the new genomes)
+  7. Appends the REGISTERED genomes (only) to the site's genome_list.tsv
+
+Why registration matters: kraken2-build --build only indexes sequences that
+have an entry in a library/*/prelim_map.txt. A FASTA copied straight into
+library/added/ is silently ignored. Earlier versions of this script did exactly
+that, and 126 gut/oral/skin genomes added in July 2026 never reached the index.
+
+--no-register downloads into the staging dir only and records nothing in
+genome_list.tsv. The genomes are NOT part of the database until you register
+them yourself (see databases/rebuild_site_db.sh, phases `stage` and `add`).
 
 Prerequisites:
   - Internet access to NCBI
-  - kraken2-build accessible (run standalone or inside the stamina-biome-tools-lr
-    Docker image following the same pattern as databases/vaginal/build.sh)
+  - Docker with the stamina-biome-tools-lr:dev image (override with --image),
+    unless --no-register or --dry-run is used
 
 Usage — single site:
     python3 expand_all_sites.py \\
         --site vaginal \\
         --db /path/to/stamina-biome-vaginal \\
         --genome-list /path/to/STAMINA-BIOME/databases/vaginal/genome_list.tsv \\
-        [--threads 8] [--dry-run]
+        [--threads 8] [--dry-run] [--no-register] [--image IMG]
 
 Usage — all four sites (db-base must contain gut/ oral/ skin/ vaginal/ subdirs):
     python3 expand_all_sites.py \\
         --site all \\
         --db-base /Volumes/MyPassport/custom_db \\
         --repo-root /path/to/STAMINA-BIOME \\
-        [--threads 8] [--dry-run]
+        [--threads 8] [--dry-run] [--no-register] [--image IMG]
 
-After running, rebuild the affected database(s):
+After running, rebuild the affected database(s). kraken2-build skips any step
+whose output already exists and bracken-build silently reuses an existing
+database.kraken, so the old index files MUST be removed first. Keep
+seqid2taxid.map (it is curated and now contains the new seqids):
+    cd /path/to/db && rm -f hash.k2d opts.k2d taxo.k2d database.kraken \\
+        database*mers.kraken database*mers.kmer_distrib
     kraken2-build --build --db /path/to/db --threads 8
     for len in 500 750 1000 1200 1500 2000; do
         bracken-build -d /path/to/db -l $len -k 35 -t 8
     done
+For incremental additions to a production DB, prefer databases/rebuild_site_db.sh,
+which also backs up, verifies and compares before/after classification.
 """
 
 import argparse
@@ -43,6 +65,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -165,6 +188,123 @@ def download_genome(taxid: int, species: str, ftp_base: str, out_dir: Path) -> P
 
     print(f"  [OK] {species} (taxid={taxid}) — {seq_count} sequences → {out_file.name}")
     return out_file
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Library registration (kraken2-build --add-to-library)
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_IMAGE = "stamina-biome-tools-lr:dev"
+STAGING_SUBDIR = "expand_staging"        # <db>/expand_staging — outside library/
+REGISTRY_NAME  = "registered.tsv"        # acc, taxid, library .fna, prelim map, n
+# Files named like this in library/added/ were written by older versions of
+# this script and were never registered (no prelim_map entry → not indexed).
+ORPHAN_RE = re.compile(r"^\d+_GC[FA]_.*_genomic\.fna$")
+
+
+def check_docker(image: str) -> None:
+    """Exit unless Docker is running and `image` can be started."""
+    try:
+        subprocess.run(["docker", "info"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["docker", "run", "--rm", image, "true"], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError):
+        sys.exit(f"[FATAL] Docker is not running or image '{image}' is not runnable.\n"
+                 f"        Registration needs it. Fix Docker, or pass --no-register "
+                 f"(the genomes will then NOT be part of the database).")
+
+
+def find_orphans(db_path: Path) -> list[str]:
+    added = db_path / "library" / "added"
+    if not added.is_dir():
+        return []
+    return sorted(f for f in os.listdir(added) if ORPHAN_RE.match(f))
+
+
+def load_registry(staging: Path) -> set[str]:
+    reg = staging / REGISTRY_NAME
+    if not reg.exists():
+        return set()
+    with open(reg) as f:
+        return {line.split("\t", 1)[0] for line in f if line.strip()}
+
+
+def register_genome(db_path: Path, fasta: Path, taxid: int, image: str) -> tuple[list[str], str, str] | None:
+    """
+    Run `kraken2-build --add-to-library` on a staged FASTA (which must live under
+    db_path) inside Docker, then verify that exactly one new .fna and one new
+    prelim_map_*.txt appeared in library/added/ and that the prelim map has one
+    TAXID entry per FASTA header, all with the expected taxid.
+
+    Returns (seqid2taxid lines, new library .fna, new prelim map) or None.
+    """
+    added = db_path / "library" / "added"
+    added.mkdir(parents=True, exist_ok=True)
+    with open(fasta) as f:
+        n_headers = sum(1 for line in f if line.startswith(">"))
+
+    before = set(os.listdir(added))
+    rel = fasta.resolve().relative_to(db_path.resolve()).as_posix()
+    cmd = ["docker", "run", "--rm", "-v", f"{db_path.resolve()}:/db:rw", image,
+           "kraken2-build", "--add-to-library", f"/db/{rel}", "--db", "/db"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
+        print(f"  [REG FAIL] {fasta.name}: kraken2-build exited {proc.returncode}")
+        for line in tail:
+            print(f"             {line}")
+        return None
+
+    new = set(os.listdir(added)) - before
+    new_maps = sorted(f for f in new if f.startswith("prelim_map_") and f.endswith(".txt"))
+    new_fna  = sorted(f for f in new if f.endswith(".fna"))
+    if len(new_maps) != 1 or len(new_fna) != 1:
+        print(f"  [REG FAIL] {fasta.name}: expected 1 new .fna + 1 new prelim_map_*.txt "
+              f"in library/added, got {new_fna} / {new_maps}")
+        return None
+
+    entries = []
+    with open(added / new_maps[0]) as f:
+        for line in f:
+            if line.startswith("TAXID\t"):
+                entries.append(line.rstrip("\n").split("\t", 1)[1])   # "<seqid>\t<taxid>"
+    bad = [e for e in entries if e.rsplit("\t", 1)[-1] != str(taxid)]
+    if len(entries) != n_headers or bad:
+        print(f"  [REG FAIL] {fasta.name}: prelim map has {len(entries)} TAXID entries "
+              f"for {n_headers} headers ({len(bad)} with wrong taxid)")
+        return None
+    return entries, new_fna[0], new_maps[0]
+
+
+def append_seqid_map(db_path: Path, lines: list[str]) -> None:
+    """
+    If seqid2taxid.map exists, kraken2-build --build reuses it as-is and never
+    reads the new prelim_map entries. Append the new seqids to it (keeping any
+    curated exclusions intact) instead of deleting/regenerating it.
+    """
+    smap = db_path / "seqid2taxid.map"
+    if not smap.exists():
+        print("  seqid2taxid.map absent — kraken2-build --build will generate it "
+              "from library/*/prelim_map.txt (includes the new genomes).")
+        return
+    with open(smap) as f:
+        existing = {line.split("\t", 1)[0] for line in f if line.strip()}
+    fresh = [ln for ln in lines if ln.split("\t", 1)[0] not in existing]
+    dup = len(lines) - len(fresh)
+    with open(smap, "a") as f:
+        for ln in fresh:
+            f.write(ln + "\n")
+    print(f"  seqid2taxid.map: appended {len(fresh)} seqids"
+          + (f" ({dup} already present — skipped)" if dup else ""))
+
+
+def loud_warning(lines: list[str]) -> None:
+    bar = "!" * 76
+    print(f"\n{bar}")
+    for line in lines:
+        print(f"!!  {line}")
+    print(f"{bar}\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -892,22 +1032,39 @@ def expand_site(
     genome_list_path: Path | None,
     threads: int,
     dry_run: bool,
+    register: bool = True,
+    image: str = DEFAULT_IMAGE,
 ) -> dict:
     """Run the full expansion for one body site. Returns a result summary dict."""
     taxa = ALL_TAXA[site]
+    staging = db_path / STAGING_SUBDIR
 
     print(f"\n{'='*64}")
     print(f"  STAMINA-BIOME DB expansion — {site.upper()}")
     print(f"  DB:          {db_path}")
+    print(f"  Staging:     {staging}")
     print(f"  Targets:     {len(taxa)} species")
     if dry_run:
         print("  Mode:        DRY RUN — nothing will be downloaded")
+    elif register:
+        print(f"  Register:    kraken2-build --add-to-library via {image}")
+    else:
+        print("  Register:    NO (--no-register) — downloads stay in staging, NOT in the DB")
     print(f"{'='*64}")
 
-    # Prepare output directory
-    out_dir = db_path / "library" / "added"
+    orphans = find_orphans(db_path)
+    if orphans:
+        loud_warning([
+            f"{len(orphans)} file(s) in {db_path}/library/added/ look like unregistered",
+            "downloads from an older expand_all_sites.py (e.g. " + orphans[0] + ").",
+            "They have no prelim_map entry, so they are NOT in the Kraken2 index, but",
+            "their taxids may already be in genome_list.tsv and will be skipped here.",
+            "Register them with databases/rebuild_site_db.sh (phases stage + add).",
+        ])
+
     if not dry_run:
-        out_dir.mkdir(parents=True, exist_ok=True)
+        staging.mkdir(parents=True, exist_ok=True)
+    registry = load_registry(staging)
 
     # Load what's already recorded in genome_list.tsv (skip if no file)
     already_listed: set[int] = set()
@@ -921,11 +1078,13 @@ def expand_site(
     }
     print(f"  New taxids to process:      {len(to_fetch)}")
 
+    empty = {"site": site, "targeted": len(to_fetch), "ok": 0, "fail": 0,
+             "missing": 0, "registered": 0, "reg_fail": 0}
     if dry_run:
         print("\n  Would add:")
         for taxid, (name, cat, notes) in sorted(to_fetch.items(), key=lambda x: x[1][0]):
             print(f"    [{cat:9s}] {name:45s}  (taxid={taxid})")
-        return {"site": site, "targeted": len(to_fetch), "ok": 0, "fail": 0, "missing": 0}
+        return empty
 
     # ── Phase 1: Resolve GCF accessions via NCBI Datasets API ─────────────────
     print(f"\n  Phase 1 — Resolving NCBI accessions ({len(to_fetch)} taxids)…")
@@ -938,6 +1097,10 @@ def expand_site(
             print(f"    [MISS ] {species} (taxid={taxid}) — not in RefSeq")
             missing.append((taxid, species, notes))
             continue
+        if acc in registry:
+            print(f"    [SKIP ] {species} (taxid={taxid}) — {acc} already registered "
+                  f"(see {staging / REGISTRY_NAME})")
+            continue
         ftp = resolve_ftp_path(acc)
         time.sleep(API_SLEEP)
         if not ftp:
@@ -949,14 +1112,14 @@ def expand_site(
 
     print(f"\n  Resolved: {len(tasks)} | Not in RefSeq: {len(missing)}")
 
-    # ── Phase 2: Download in parallel ─────────────────────────────────────────
-    print(f"\n  Phase 2 — Downloading {len(tasks)} genomes ({threads} threads)…")
+    # ── Phase 2: Download in parallel (into staging, NOT library/added) ───────
+    print(f"\n  Phase 2 — Downloading {len(tasks)} genomes to staging ({threads} threads)…")
     ok_results   = []
     fail_results = []
 
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {
-            pool.submit(download_genome, taxid, species, ftp, out_dir): (taxid, species, cat, notes, acc)
+            pool.submit(download_genome, taxid, species, ftp, staging): (taxid, species, cat, notes, acc)
             for taxid, species, cat, notes, acc, ftp in tasks
         }
         for future in as_completed(futures):
@@ -964,7 +1127,7 @@ def expand_site(
             try:
                 result = future.result()
                 if result:
-                    ok_results.append((taxid, species, cat, notes, acc))
+                    ok_results.append((taxid, species, cat, notes, acc, result))
                 else:
                     fail_results.append((taxid, species))
             except Exception as e:
@@ -972,15 +1135,47 @@ def expand_site(
                 fail_results.append((taxid, species))
             time.sleep(0.1)
 
-    # ── Phase 3: Update genome_list.tsv ───────────────────────────────────────
-    if genome_list_path and ok_results:
-        print(f"\n  Phase 3 — Updating genome_list.tsv ({len(ok_results)} entries)…")
+    # ── Phase 3: Register with kraken2-build --add-to-library (sequential) ────
+    registered = []
+    reg_fail   = []
+    if register and ok_results:
+        print(f"\n  Phase 3 — Registering {len(ok_results)} genomes "
+              f"(kraken2-build --add-to-library, {image})…")
+        new_map_lines: list[str] = []
+        with open(staging / REGISTRY_NAME, "a") as reg:
+            for taxid, species, cat, notes, acc, fasta in ok_results:
+                res = register_genome(db_path, fasta, taxid, image)
+                if res is None:
+                    reg_fail.append((taxid, species))
+                    continue
+                lines, lib_fna, lib_map = res
+                new_map_lines.extend(lines)
+                reg.write(f"{acc}\t{taxid}\t{lib_fna}\t{lib_map}\t{len(lines)}\n")
+                reg.flush()
+                fasta.unlink()          # the registered copy now lives in library/added
+                registered.append((taxid, species, cat, notes, acc))
+                print(f"  [REG  ] {species} ({acc}) — {len(lines)} seqs → library/added/{lib_fna}")
+        if new_map_lines:
+            append_seqid_map(db_path, new_map_lines)
+    elif ok_results:
+        loud_warning([
+            f"--no-register: {len(ok_results)} genome(s) were downloaded to",
+            f"  {staging}",
+            "and are NOT part of the database. kraken2-build --build will ignore them",
+            "until each one is registered with kraken2-build --add-to-library (and,",
+            "if seqid2taxid.map exists, its seqids are appended to that map).",
+            "genome_list.tsv has NOT been updated.",
+        ])
+
+    # ── Phase 4: Update genome_list.tsv (registered genomes only) ─────────────
+    if genome_list_path and registered:
+        print(f"\n  Phase 4 — Updating genome_list.tsv ({len(registered)} entries)…")
         today = date.today().isoformat()
         with open(genome_list_path, "a") as f:
             f.write(f"\n# ── expand_all_sites.py additions ({today}) ─────────────────────────────────\n")
-            for taxid, species, cat, notes, acc in ok_results:
+            for taxid, species, cat, notes, acc in registered:
                 f.write(f"{acc}\t{species}\t{taxid}\tncbi_expand\t{notes}\n")
-        print(f"  Appended {len(ok_results)} rows to {genome_list_path}")
+        print(f"  Appended {len(registered)} rows to {genome_list_path}")
 
     if missing:
         print(f"\n  ── Taxa not found in RefSeq (may need GenBank / manual add) ──────────────")
@@ -990,14 +1185,21 @@ def expand_site(
     print(f"\n  ── {site.upper()} SUMMARY ─────────────────────────────────────────────────────")
     print(f"    Downloaded OK : {len(ok_results)}")
     print(f"    Download fail : {len(fail_results)}")
+    print(f"    Registered    : {len(registered)}" + ("" if register else "  (--no-register)"))
+    print(f"    Register fail : {len(reg_fail)}")
     print(f"    Not in RefSeq : {len(missing)}")
+    if reg_fail:
+        print("    Failed registrations (staged files kept): "
+              + ", ".join(sp for _, sp in reg_fail))
 
     return {
-        "site":    site,
-        "targeted": len(to_fetch),
-        "ok":      len(ok_results),
-        "fail":    len(fail_results),
-        "missing": len(missing),
+        "site":       site,
+        "targeted":   len(to_fetch),
+        "ok":         len(ok_results),
+        "fail":       len(fail_results),
+        "missing":    len(missing),
+        "registered": len(registered),
+        "reg_fail":   len(reg_fail),
     }
 
 
@@ -1040,7 +1242,19 @@ def main():
         "--dry-run", action="store_true",
         help="Print what would be downloaded without downloading anything",
     )
+    parser.add_argument(
+        "--no-register", dest="register", action="store_false",
+        help="Download to <db>/expand_staging only; do NOT run kraken2-build "
+             "--add-to-library (genomes will NOT be in the DB; genome_list.tsv not updated)",
+    )
+    parser.add_argument(
+        "--image", default=DEFAULT_IMAGE,
+        help=f"Docker image providing kraken2-build (default: {DEFAULT_IMAGE})",
+    )
     args = parser.parse_args()
+
+    if args.register and not args.dry_run:
+        check_docker(args.image)
 
     sites_to_run: list[str]
     if args.site == "all":
@@ -1084,6 +1298,8 @@ def main():
             genome_list_path=genome_list_path,
             threads=args.threads,
             dry_run=args.dry_run,
+            register=args.register,
+            image=args.image,
         )
         all_results.append(result)
 
@@ -1092,27 +1308,46 @@ def main():
         print(f"\n{'='*64}")
         print("  OVERALL SUMMARY")
         print(f"{'='*64}")
-        total_ok = total_fail = total_miss = 0
+        total_ok = total_fail = total_miss = total_reg = total_rfail = 0
         for r in all_results:
             print(
                 f"  {r['site']:8s}  targeted={r['targeted']:3d}  "
-                f"ok={r['ok']:3d}  fail={r['fail']:3d}  not-in-RefSeq={r['missing']:3d}"
+                f"ok={r['ok']:3d}  fail={r['fail']:3d}  registered={r['registered']:3d}  "
+                f"reg-fail={r['reg_fail']:3d}  not-in-RefSeq={r['missing']:3d}"
             )
-            total_ok   += r["ok"]
-            total_fail += r["fail"]
-            total_miss += r["missing"]
+            total_ok    += r["ok"]
+            total_fail  += r["fail"]
+            total_miss  += r["missing"]
+            total_reg   += r["registered"]
+            total_rfail += r["reg_fail"]
         print(f"{'─'*64}")
         print(f"  TOTAL     targeted={sum(r['targeted'] for r in all_results):3d}  "
-              f"ok={total_ok:3d}  fail={total_fail:3d}  not-in-RefSeq={total_miss:3d}")
+              f"ok={total_ok:3d}  fail={total_fail:3d}  registered={total_reg:3d}  "
+              f"reg-fail={total_rfail:3d}  not-in-RefSeq={total_miss:3d}")
 
-    if not args.dry_run:
+    if not args.dry_run and args.register:
         print("\n  ── Next steps ──────────────────────────────────────────────────────────────")
-        for site in sites_to_run:
+        print("  Registered genomes are in the library but NOT yet in the index. Rebuild.")
+        print("  kraken2-build skips steps whose output exists and bracken-build reuses an")
+        print("  existing database.kraken, so delete those first. KEEP seqid2taxid.map.")
+        for r in all_results:
+            if not r["registered"]:
+                continue
+            site = r["site"]
             db = (Path(args.db_base) / site) if args.site == "all" else Path(args.db or "")
             print(f"\n  {site.upper()}:")
-            print(f"    kraken2-build --build --db {db} --threads {args.threads}")
+            print(f"    (cd {db} && rm -f hash.k2d opts.k2d taxo.k2d database.kraken "
+                  f"database*mers.kraken database*mers.kmer_distrib)")
+            print(f"    docker run --rm -v {db}:/db {args.image} "
+                  f"kraken2-build --build --db /db --threads {args.threads}")
             for length in [500, 750, 1000, 1200, 1500, 2000]:
-                print(f"    bracken-build -d {db} -l {length} -k 35 -t {args.threads}")
+                print(f"    docker run --rm -v {db}:/db {args.image} "
+                      f"/opt/bracken/bracken-build -d /db -l {length} -k 35 -t {args.threads}")
+
+    if not args.dry_run and any(r["reg_fail"] or r["fail"] for r in all_results):
+        print("\n  [ERROR] Some downloads or registrations failed — see the summaries above.")
+        print()
+        sys.exit(1)
 
     print()
 

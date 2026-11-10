@@ -163,6 +163,49 @@ if [ "$PIPELINE_EXIT" -eq 0 ]; then
     echo "[WRAPPER] WARNING: frontend postprocess script not found: $FRONTEND_POSTPROCESS" >&2
   fi
 
+  # -------------------------------------------------------------------------
+  # Output Directory: move the finished run folder to the folder chosen in the
+  # GUI (config run.final_dir) and leave a link in outputs/ pointing to it, so
+  # there is one copy of the run, where the user wants it, and the Dashboard
+  # still lists it. A failed run stays in outputs/ (so it can be resumed).
+  # Problems here only warn: they never fail a run that succeeded.
+  # -------------------------------------------------------------------------
+  FINAL_DIR_CFG=""
+  if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+    FINAL_DIR_CFG=$(python3 -c "import json,sys; c=json.load(open(sys.argv[1])); print((c.get('run') or {}).get('final_dir') or '')" "$CONFIG_FILE" 2>/dev/null)
+  fi
+  SRC_RUN="$WORK_DIR/$RUN_ID"
+  if [ -n "$FINAL_DIR_CFG" ] && [ -n "$WORK_DIR" ] && [ -n "$RUN_ID" ] && [ -d "$SRC_RUN" ] && [ ! -L "$SRC_RUN" ]; then
+    if [ ! -d "$FINAL_DIR_CFG" ]; then
+      echo "[WRAPPER] WARNING: Output Directory not found: $FINAL_DIR_CFG - the run stays in $SRC_RUN" >&2
+    elif [ "$(cd "$FINAL_DIR_CFG" && pwd -P)" = "$(cd "$WORK_DIR" && pwd -P)" ]; then
+      echo "[WRAPPER] Output Directory is the outputs folder - the run stays in $SRC_RUN"
+    else
+      DEST="$(cd "$FINAL_DIR_CFG" && pwd -P)/$RUN_ID"
+      OLD=""
+      MOVE_OK=1
+      if [ -e "$DEST" ] || [ -L "$DEST" ]; then
+        if [ -f "$DEST/outputs.json" ] || [ -f "$DEST/config.original.json" ]; then
+          # An earlier STAMINA-BIOME run with this name: it is replaced, as a rerun
+          # replaces it in outputs/. Set aside first, deleted once the move worked.
+          OLD="$DEST.replaced_$$"
+          mv "$DEST" "$OLD" || MOVE_OK=0
+        else
+          # Something else has this name: never touch it, use a dated name instead
+          DEST="${DEST}_$(date +%Y%m%d_%H%M%S)"
+        fi
+      fi
+      if [ "$MOVE_OK" -eq 1 ] && mv "$SRC_RUN" "$DEST"; then
+        ln -s "$DEST" "$SRC_RUN" || echo "[WRAPPER] WARNING: could not link $SRC_RUN to $DEST" >&2
+        if [ -n "$OLD" ]; then rm -rf "$OLD"; fi
+        echo "[WRAPPER] Run folder moved to: $DEST (outputs/$RUN_ID links to it)"
+      else
+        echo "[WRAPPER] WARNING: could not move the run to $DEST - it stays in $SRC_RUN" >&2
+        if [ -n "$OLD" ] && [ ! -e "$DEST" ]; then mv "$OLD" "$DEST"; fi
+      fi
+    fi
+  fi
+
 else
   echo "[WRAPPER] Pipeline exited with code $PIPELINE_EXIT — skipping frontend postprocess"
 fi

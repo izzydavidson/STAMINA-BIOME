@@ -1,0 +1,38 @@
+# oral DB additions — November 2026 full rebuild
+# source=new_vs_core_nt: absent from DB, reported by core_nt comparison in Test_FeMHS_471_Test6
+# source=july_orphan: in genome_list.tsv and on disk in library/added/, never registered with
+#   kraken2-build --add-to-library, so never indexed. Staging reuses the on-disk file (no download).
+# Lines starting with # are ignored by databases/rebuild_site_db.sh.
+accession	taxid	species	source	notes
+GCF_007990365.1	109328	Leptotrichia trevisanii	july_orphan	Downloaded 2026-07-09, never registered; Oral commensal
+GCF_001553565.1	111015	Actinomyces radicidentis	july_orphan	Downloaded 2026-07-09, never registered; Oral actinomycete; root caries and endodontic infections
+GCF_002959935.1	1110546	Veillonella tobetsuensis	july_orphan	Downloaded 2026-07-09, never registered; Oral Veillonella; HMP oral sites; NCBI taxid 1110546
+GCF_002243135.1	1260	Finegoldia magna	july_orphan	Downloaded 2026-07-09, never registered; Oral anaerobe; abscess former
+GCF_000013425.1	1280	Staphylococcus aureus	july_orphan	Downloaded 2026-07-09, never registered; Oral carriage; post-dental infection
+GCF_019380255.1	131111	Schaalia turicensis	july_orphan	Downloaded 2026-07-09, never registered; Was Actinomyces turicensis; oral actinomycete; NCBI taxid 131111
+# EXCLUDED 2026-11-06 (mitis-group false positive in CAMISIM oral mock: 0.42%, took reads from S. mitis): GCF_001457635.1	1313	Streptococcus pneumoniae	july_orphan	Downloaded 2026-07-09, never registered; Pharyngeal pathogen; pneumonia; oral coloniser
+GCF_900475035.1	1314	Streptococcus pyogenes	july_orphan	Downloaded 2026-07-09, never registered; GAS; pharyngitis; tonsillitis; scarlet fever
+GCF_002959895.1	1911679	Veillonella infantium	july_orphan	Downloaded 2026-07-09, never registered; Oral Veillonella; infant oral microbiome; NCBI taxid 1911679
+GCF_001298465.1	199	Campylobacter concisus	july_orphan	Downloaded 2026-07-09, never registered; Oral Campylobacter; subgingival; also GI
+GCF_025151385.1	28127	Hoylesella buccalis	july_orphan	Downloaded 2026-07-09, never registered; Was Prevotella buccalis; oral anaerobe; periodontal sulcus
+GCF_002302565.1	28188	Capnocytophaga canimorsus	july_orphan	Downloaded 2026-07-09, never registered; Dog bite septicaemia; fatal in asplenic patients
+GCF_947090205.1	309120	Dialister micraerophilus	july_orphan	Downloaded 2026-07-09, never registered; Oral Veillonellaceae; periodontal pocket; NCBI taxid 309120
+GCF_016028855.1	37923	Rothia kristinae	july_orphan	Downloaded 2026-07-09, never registered; Was Kocuria kristinae; reclassified to Rothia 2022; oral/skin commensal
+GCF_002959855.1	419208	Veillonella denticariosi	july_orphan	Downloaded 2026-07-09, never registered; Oral Veillonella; dental caries associated; NCBI taxid 419208
+GCF_000026945.1	42374	Candida dubliniensis	july_orphan	Downloaded 2026-07-09, never registered; Oral candidiasis; morphologically similar to C. albicans; NCBI taxid 42374
+GCF_900187255.1	45243	Capnocytophaga haemolytica	july_orphan	Downloaded 2026-07-09, never registered; Oral gliding bacterium; periodontal sulcus; NCBI taxid 45243
+GCF_055385135.1	470565	Prevotella histicola	july_orphan	Downloaded 2026-07-09, never registered; Oral Prevotella; common in HMP oral sites; NCBI taxid 470565
+GCF_900476075.1	480	Moraxella catarrhalis	july_orphan	Downloaded 2026-07-09, never registered; Upper respiratory pathogen; oral reservoir
+GCF_013030075.1	485	Neisseria gonorrhoeae	july_orphan	Downloaded 2026-07-09, never registered; Pharyngeal gonorrhoea; increasing prevalence
+GCF_003054445.1	4909	Pichia kudriavzevii	july_orphan	Downloaded 2026-07-09, never registered; Was Candida krusei; intrinsically fluconazole-resistant; oral isolate; NCBI taxid 4909
+GCF_000413055.1	51160	Treponema maltophilum	july_orphan	Downloaded 2026-07-09, never registered; Oral spirochaete; periodontal pocket; NCBI taxid 51160
+GCF_000429245.1	52768	Schaalia georgiae	july_orphan	Downloaded 2026-07-09, never registered; Was Actinomyces georgiae; oral commensal; NCBI taxid 52768
+GCF_000429265.1	52769	Actinomyces gerencseriae	july_orphan	Downloaded 2026-07-09, never registered; Dental plaque; previously A. israelii serotype II
+GCF_016127995.1	52773	Schaalia meyeri	july_orphan	Downloaded 2026-07-09, never registered; Was Actinomyces meyeri; oral actinomycete; dental plaque
+GCF_000182965.3	5476	Candida albicans	july_orphan	Downloaded 2026-07-09, never registered; Oral candidiasis (thrush); oropharyngeal
+GCF_010111755.1	5478	Nakaseomyces glabratus	july_orphan	Downloaded 2026-07-09, never registered; Oral candidiasis; fluconazole-resistant; NCBI current name Nakaseomyces glabratus (formerly Candida glabrata); taxid 5478 confirmed
+GCF_000006335.3	5482	Candida tropicalis	july_orphan	Downloaded 2026-07-09, never registered; Oral candidiasis; azole resistance emerging
+# EXCLUDED 2026-11-06 (mitis-group false positive in CAMISIM oral mock: 0.14%, took reads from S. mitis): GCF_000187465.1	68892	Streptococcus infantis	july_orphan	Downloaded 2026-07-09, never registered; Oral mitis-group streptococcus; early biofilm coloniser; NCBI taxid 68892
+GCF_013372225.1	827	Campylobacter ureolyticus	july_orphan	Downloaded 2026-07-09, never registered; Oral Campylobacter; was Bacteroides ureolyticus; NCBI taxid 827
+GCF_000378085.1	840	Hoylesella loescheii	july_orphan	Downloaded 2026-07-09, never registered; Oral anaerobe; formerly Prevotella loescheii; reclassified 2020
+GCF_000469465.1	84136	Gemella bergeri	july_orphan	Downloaded 2026-07-09, never registered; Oral Gemella; gingival sulcus; NCBI taxid 84136

@@ -62,6 +62,12 @@ if ! command -v python3 >/dev/null 2>&1; then echo "ERROR: python3 is required b
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Sample sheet (barcode, sample_name[, site]) in the order the user entered the
+# samples: sample_order.R orders every plot and table by it, including steps
+# whose params don't carry the sheet path (e.g. valencia)
+STAMINA_SAMPLE_SHEET="$(jq -r '.sample_sheet // .inputs.sample_sheet // .input.sample_sheet // empty' "${CONFIG_PATH}" 2>/dev/null || true)"
+export STAMINA_SAMPLE_SHEET
+
 # Determine paths from outputs.json
 read -r MODULE_DIR RUN_DIR <<< "$(python3 - "${OUTPUTS_JSON}" <<'PY'
 import json, sys, os
@@ -357,6 +363,13 @@ run_r_step() {
     shopt -u nullglob
     output_count=${#step_outputs[@]}
     expected_outputs="*.csv/*.tsv files"
+  elif [[ "${output_type}" == "valencia" ]]; then
+    # valencia.R writes its plots (PNG) next to the VALENCIA tables
+    shopt -s nullglob
+    local step_outputs=( "${step_out_dir}"/*.png )
+    shopt -u nullglob
+    output_count=${#step_outputs[@]}
+    expected_outputs="VALENCIA plots"
   fi
 
   if [[ ${output_count} -eq 0 ]]; then
@@ -819,6 +832,17 @@ else
   steps_append "${STEPS_JSON}" "r_postprocess" "completed_with_errors" "R postprocessing completed with some step failures" "" "" "${OVERALL_EC}" "${started}" "${ended}"
 fi
 
+# VALENCIA outputs (pipeline tables/plots + valencia.R plots) -> <module>/final/valencia/
+shopt -s nullglob
+_valencia_out=( "${RESULTS_VALENCIA_DIR}"/* )
+shopt -u nullglob
+if [[ ${#_valencia_out[@]} -gt 0 ]]; then
+  mkdir -p "${FINAL_DIR}/valencia"
+  for vf in "${_valencia_out[@]}"; do
+    [[ -f "${vf}" ]] && cp -f "${vf}" "${FINAL_DIR}/valencia/"
+  done
+fi
+
 # Final summary showing actual file counts
 echo ""
 echo "[r_postprocess] =============================================="
@@ -844,10 +868,10 @@ final_tables=( "${FINAL_TABLES_DIR}"/*.csv "${FINAL_TABLES_DIR}"/*.tsv "${FINAL_
 final_valencia_files=( "${FINAL_DIR}/valencia"/* )
 final_qc_files=( "${FINAL_DIR}/qc"/*.html )
 shopt -u nullglob
-echo "[r_postprocess] final/plots/:      ${#final_plots[@]} files"
-echo "[r_postprocess] final/tables/:     ${#final_tables[@]} files"
-echo "[r_postprocess] final/valencia/:   ${#final_valencia_files[@]} files"
-echo "[r_postprocess] final/qc/:         ${#final_qc_files[@]} files"
+echo "[r_postprocess] ${MODULE_NAME}/final/plots/:      ${#final_plots[@]} files"
+echo "[r_postprocess] ${MODULE_NAME}/final/tables/:     ${#final_tables[@]} files"
+echo "[r_postprocess] ${MODULE_NAME}/final/valencia/:   ${#final_valencia_files[@]} files"
+echo "[r_postprocess] ${MODULE_NAME}/final/qc/:         ${#final_qc_files[@]} files"
 echo "[r_postprocess] =============================================="
 echo "[r_postprocess] Complete. Results: ${RESULTS_DIR}"
 exit ${OVERALL_EC}

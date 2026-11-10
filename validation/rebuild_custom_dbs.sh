@@ -4,7 +4,28 @@
 # after adding CAMISIM simulation genomes.
 #
 # Runs sequentially (not parallel) to avoid USB I/O contention.
-# Deletes stale index files before each rebuild to force full regeneration.
+# Deletes stale index files before each rebuild to force full regeneration:
+#   hash.k2d opts.k2d taxo.k2d  — kraken2-build --build skips steps whose output exists
+#   database.kraken, database*mers.{kraken,kmer_distrib}
+#                               — bracken-build silently REUSES an existing
+#                                 database.kraken, so every kmer_distrib would be
+#                                 computed from the OLD index
+#   seqid2taxid.map             — unless --keep-seqid-map (see below)
+#
+# Usage:
+#   bash rebuild_custom_dbs.sh [--db-base /path/to/custom_db] [--keep-seqid-map]
+#
+#   --keep-seqid-map  Do NOT delete seqid2taxid.map. By default it is deleted and
+#                     kraken2-build regenerates it from library/*/prelim_map.txt,
+#                     which RE-ADDS any sequences deliberately removed from a
+#                     curated map (e.g. contaminant exclusions). With this flag the
+#                     existing map is used as-is, so library sequences missing from
+#                     it are NOT indexed (the count is logged).
+#
+# This is a FULL rebuild of the index from the existing library. To add genomes to
+# a site DB incrementally (with backup, verification and rollback) use
+# databases/rebuild_site_db.sh instead. Genomes must already be registered with
+# kraken2-build --add-to-library; FASTAs merely copied into library/added/ are ignored.
 
 set -euo pipefail
 
@@ -12,11 +33,13 @@ set -euo pipefail
 CUSTOM_DB_BASE="/Volumes/MyPassport/custom_db"
 DOCKER_IMAGE="stamina-biome-tools-lr:dev"
 SITES=(gut oral skin)
+KEEP_SEQID_MAP=false
 
 # Parse optional --db-base argument
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --db-base) CUSTOM_DB_BASE="$2"; shift 2 ;;
+    --keep-seqid-map) KEEP_SEQID_MAP=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -77,7 +100,22 @@ delete_stale_indexes() {
     log "  Deleting stale index files from $db_path ..."
 
     local files_deleted=0
-    for f in hash.k2d opts.k2d taxo.k2d seqid2taxid.map; do
+    local stale="hash.k2d opts.k2d taxo.k2d database.kraken"
+    if [[ "$KEEP_SEQID_MAP" == "true" ]]; then
+        if [[ ! -s "$db_path/seqid2taxid.map" ]]; then
+            log "  [ERROR] --keep-seqid-map given but $db_path/seqid2taxid.map does not exist"
+            return 1
+        fi
+        log "    Keeping: seqid2taxid.map (--keep-seqid-map)"
+    else
+        stale="$stale seqid2taxid.map"
+    fi
+    # Bracken intermediates for every read length (all derive from database.kraken)
+    local m
+    for m in "$db_path"/database*mers.kraken "$db_path"/database*mers.kmer_distrib; do
+        if [[ -f "$m" ]]; then stale="$stale $(basename "$m")"; fi
+    done
+    for f in $stale; do
         local fpath="$db_path/$f"
         if [[ -f "$fpath" ]]; then
             rm -f "$fpath"
@@ -117,6 +155,21 @@ build_kraken2() {
         return $exit_code
     fi
 
+    if [[ ! -s "$db_path/hash.k2d" ]]; then
+        log "  [ERROR] kraken2-build exited 0 but hash.k2d was not created"
+        return 1
+    fi
+
+    if [[ "$KEEP_SEQID_MAP" == "true" ]]; then
+        local unmapped
+        unmapped=$(find "$db_path/library" -maxdepth 2 -name prelim_map.txt -exec cat {} + \
+            | awk -F'\t' 'NR==FNR {m[$1]=1; next} !($2 in m) {c++} END {print c+0}' "$db_path/seqid2taxid.map" -)
+        if [[ "$unmapped" != "0" ]]; then
+            log "  [WARN] $unmapped library sequence(s) are not in the kept seqid2taxid.map and were NOT indexed"
+            log "         (expected only for curated exclusions)"
+        fi
+    fi
+
     log "  kraken2-build completed in $(elapsed_since "$start")"
 }
 
@@ -148,6 +201,17 @@ build_bracken() {
         return $exit_code
     fi
 
+    # All Bracken files were deleted before the build, so existence == fresh.
+    local f
+    for f in database.kraken "database${BRACKEN_READLEN}mers.kmer_distrib"; do
+        if [[ ! -s "$db_path/$f" ]]; then
+            log "  [ERROR] bracken-build exited 0 but $f was not created"
+            return 1
+        fi
+    done
+    log "  NOTE: all other Bracken read lengths were deleted as stale — rebuild any you need"
+    log "        (e.g. databases/<site>/build_sr.sh --bracken-only for 75/100/150/250 bp)."
+
     log "  bracken-build completed in $(elapsed_since "$start")"
 }
 
@@ -157,7 +221,9 @@ process_site() {
     local site_start
     site_start=$(date +%s)
 
-    log_section "Site: ${site^^}"
+    local site_uc
+    site_uc=$(echo "$site" | tr '[:lower:]' '[:upper:]')
+    log_section "Site: ${site_uc}"
     log "  DB path: $db_path"
 
     if [[ ! -d "$db_path" ]]; then
@@ -166,7 +232,9 @@ process_site() {
     fi
 
     # Step 1: Delete stale indexes
-    delete_stale_indexes "$db_path" "$site"
+    if ! delete_stale_indexes "$db_path" "$site"; then
+        return 1
+    fi
 
     # Step 2: Rebuild Kraken2
     local k2_start
@@ -189,7 +257,7 @@ process_site() {
     fi
 
     log ""
-    log "  Site ${site^^} COMPLETE — total time: $(elapsed_since "$site_start")"
+    log "  Site ${site_uc} COMPLETE — total time: $(elapsed_since "$site_start")"
 }
 
 # ---- Main ----
@@ -200,6 +268,7 @@ log "Log file: $LOG_FILE"
 log "Sites: ${SITES[*]}"
 log "Docker image: $DOCKER_IMAGE"
 log "Bracken readlen: $BRACKEN_READLEN"
+log "Keep seqid2taxid.map: $KEEP_SEQID_MAP"
 log ""
 
 check_docker

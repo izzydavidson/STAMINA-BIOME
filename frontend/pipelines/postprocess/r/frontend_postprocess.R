@@ -63,6 +63,12 @@ config <- tryCatch(jsonlite::fromJSON(config_file), error = function(e) {
 })
 if (is.null(config)) quit(status = 0)
 
+# Plot/table scripts re-run below (some with empty params) find the sample
+# sheet here, so samples keep the order the user entered them in
+if (is.character(config$sample_sheet) && nzchar(config$sample_sheet[1])) {
+  Sys.setenv(STAMINA_SAMPLE_SHEET = config$sample_sheet[1])
+}
+
 pipeline_key   <- config$pipeline_id
 output_dir     <- config$run$work_dir
 run_id_raw     <- config$run$run_id

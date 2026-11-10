@@ -25,6 +25,10 @@ TOOLS_SH="${PIPELINES_DIR}/tools.sh"
 if [[ ! -f "${TOOLS_SH}" ]]; then echo "ERROR: Missing shared tools file: ${TOOLS_SH}" >&2; exit 2; fi
 # shellcheck disable=SC1090
 source "${TOOLS_SH}"
+SITE_ROUTING_SH="${PIPELINES_DIR}/site_routing.sh"
+if [[ ! -f "${SITE_ROUTING_SH}" ]]; then echo "ERROR: Missing shared site routing file: ${SITE_ROUTING_SH}" >&2; exit 2; fi
+# shellcheck disable=SC1090
+source "${SITE_ROUTING_SH}"
 
 jq_first() {
   local file="$1"; shift
@@ -1384,6 +1388,15 @@ PY
   fi
 
   SAMPLE_TYPE_NORM="$(printf "%s" "${SAMPLE_TYPE_RAW}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+
+  # sr_amp classifies one sample per run: a per-sample site (sample sheet /
+  # .sample_sites, e.g. from a mixed-site batch) decides VALENCIA for it.
+  site_routing_load "${CONFIG_PATH}" "$(jq_first "${CONFIG_PATH}" '.inputs.sample_sheet' '.input.sample_sheet' '.sample_sheet' || true)"
+  if [[ ${SITE_ROUTING_ACTIVE} -eq 1 ]]; then
+    SAMPLE_TYPE_NORM="$(site_for_sample "${SAMPLE_ID}" "$(site_normalize_name "${SAMPLE_TYPE_NORM}")")"
+    SAMPLE_TYPE_RAW="${SAMPLE_TYPE_NORM}"
+    echo "[site_routing] sr_amp sample ${SAMPLE_ID} resolved to site: ${SAMPLE_TYPE_NORM}" >&2
+  fi
 
   VALENCIA_DIR="${RESULTS_DIR}/valencia"
   VALENCIA_LOG="${LOGS_DIR}/valencia.log"

@@ -93,7 +93,7 @@ long_read_ui <- function(id) {
                       width = "100%"
                     )
                   ),
-                  tags$small(class = "text-muted", "A copy of the run folder will be saved here after a successful run.")
+                  tags$small(class = "text-muted", "The run folder is moved here after a successful run (outputs/ keeps a link to it, so the Dashboard still lists it).")
                 )
               ),
 
@@ -295,7 +295,8 @@ long_read_ui <- function(id) {
                   class = "col-md-6 mb-3",
                   tags$label(class = "form-label", "Sample Type"),
                   selectInput(ns("sample_type"), NULL,
-                    choices = c("Vaginal" = "vaginal", "Gut" = "gut", "Oral" = "oral", "Skin" = "skin", "Other" = "other"),
+                    choices = c("Vaginal" = "vaginal", "Gut" = "gut", "Oral" = "oral", "Skin" = "skin", "Other" = "other",
+                                "Mixed (set per sample)" = "mixed"),
                     selected = "vaginal"
                   )
                 ),
@@ -308,7 +309,7 @@ long_read_ui <- function(id) {
                   )
                 ),
                 conditionalPanel(
-                  condition = sprintf("input['%s'] == 'vaginal'", ns("sample_type")),
+                  condition = sprintf("input['%s'] == 'vaginal' || input['%s'] == 'mixed'", ns("sample_type"), ns("sample_type")),
                   div(
                     class = "col-md-6 mb-3",
                     tags$label(class = "form-label", "VALENCIA Classification"),
@@ -336,12 +337,49 @@ long_read_ui <- function(id) {
                         width = "100%"
                       )
                     ),
+                    conditionalPanel(
+                      condition = sprintf("input['%s'] == 'mixed'", ns("sample_type")),
+                      tags$small(class = "text-muted",
+                        "Mixed run: used for any sample type without its own database below.")
+                    )
+                  ),
+                  # Mixed run: one Kraken2 DB + parameters per sample type, plus optional comparison DB
+                  conditionalPanel(
+                    condition = sprintf("input['%s'] == 'mixed'", ns("sample_type")),
+                    div(
+                      class = "col-md-12 mb-3",
+                      uiOutput(ns("site_db_rows"))
+                    ),
+                    div(
+                      class = "col-md-12 mb-3",
+                      tags$label(class = "form-label", "Comparison Database (Optional)"),
+                      div(
+                        class = "file-browse-group",
+                        div(
+                          class = "drop-zone",
+                          div(class = "drop-zone-header", icon("upload"), " Drag & drop"),
+                          actionButton(ns("comparison_db_browse"), "Browse",
+                            class = "btn btn-outline-secondary"
+                          )
+                        ),
+                        textInput(ns("comparison_db"), NULL,
+                          placeholder = "/path/to/common/kraken2/db",
+                          width = "100%"
+                        )
+                      ),
+                      tags$small(class = "text-muted",
+                        "Optional. Every sample is also classified against this one database with the same ",
+                        "settings. Use these results to compare sample types: differences between ",
+                        "site-specific databases otherwise mix with real biological differences.")
+                    )
                   ),
                   div(
                     class = "col-md-12 mb-3",
                     checkboxInput(ns("human_depletion"), "Human Read Depletion", value = FALSE),
                     tags$small(class = "text-muted", "Remove human-derived sequences from the dataset")
                   ),
+                  conditionalPanel(
+                    condition = sprintf("input['%s'] != 'mixed'", ns("sample_type")),
                   div(
                     class = "col-md-6 mb-3",
                     tags$label(class = "form-label", "Kraken2 Confidence Threshold"),
@@ -353,6 +391,7 @@ long_read_ui <- function(id) {
                     tags$label(class = "form-label", "Kraken2 Minimum Hit Groups"),
                     numericInput(ns("kraken_min_hit_groups"), NULL, value = 2L, min = 1, max = 100, step = 1),
                     tags$small(class = "text-muted", "Distinct k-mer hit groups required for a classification. Site defaults: vaginal=2, gut=4, oral=4, skin=4")
+                  )
                   )
                 ),
                 # lr_amp: Emu classifier params
@@ -389,7 +428,7 @@ long_read_ui <- function(id) {
 
           # ── Samples (barcode mapping for demultiplexed runs) ─────
           conditionalPanel(
-            condition = sprintf("input['%s'] != '' || input['%s'] == true", ns("barcoding_kit"), ns("demultiplex")),
+            condition = sprintf("input['%s'] != '' || input['%s'] == true || input['%s'] == 'mixed'", ns("barcoding_kit"), ns("demultiplex"), ns("sample_type")),
             div(
               class = "card mb-4",
               div(
@@ -401,7 +440,11 @@ long_read_ui <- function(id) {
                   "Name each sample in this multiplexed run. Barcode is optional — leave it blank ",
                   "to auto-assign in order (barcode01, barcode02, ...), or enter a specific barcode ",
                   "ID (e.g. BC01) to pin a sample to it. The selected barcoding kit determines the ",
-                  "maximum number of samples available."
+                  "maximum number of samples available.",
+                  tags$span(
+                    `data-display-if` = sprintf("input['%s'] == 'mixed'", ns("sample_type")),
+                    " Mixed run: choose each sample's type."
+                  )
                 ),
                 uiOutput(ns("barcode_map_rows")),
                 div(

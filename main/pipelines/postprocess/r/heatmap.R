@@ -44,6 +44,23 @@ if (is.null(outputs_json) || is.null(out_dir)) {
 outputs <- fromJSON(outputs_json)
 params <- tryCatch(fromJSON(params_json), error = function(e) list())
 
+# Shared sample ordering: samples in the order entered in the GUI/CLI sample sheet
+local({
+  f <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)[1])
+  d <- if (!is.na(f) && nzchar(f)) dirname(normalizePath(f)) else getwd()
+  for (p in c(file.path(d, "sample_order.R"),
+              file.path(d, "..", "..", "..", "..", "main", "pipelines", "postprocess", "r", "sample_order.R"))) {
+    if (file.exists(p)) { sys.source(p, envir = globalenv()); break }
+  }
+})
+if (!exists("sample_levels", mode = "function")) {
+  sample_levels <- function(ids, params = list()) sort(unique(as.character(ids)))
+  group_levels <- function(sample_ids, groups, sample_lv) {
+    unique(as.character(groups)[order(match(as.character(sample_ids), sample_lv))])
+  }
+  order_rows_by_sample <- function(df, col = "sample_id", params = list()) df
+}
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # Apply barcode → sample name mapping from sample sheet (if provided)
@@ -97,7 +114,7 @@ generate_heatmap <- function(data, taxon_col, abundance_col, rank_label, top_n, 
   }
 
   # Create wide matrix for heatmap
-  samples <- unique(data_top$sample_id)
+  samples <- sample_levels(data_top$sample_id, params)  # order entered in the GUI/CLI
   taxa <- top_taxa
 
   n_samples <- length(samples)

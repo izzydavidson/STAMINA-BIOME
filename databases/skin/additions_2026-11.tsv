@@ -1,0 +1,67 @@
+# skin DB additions — November 2026 full rebuild
+# source=new_vs_core_nt: absent from DB, reported by core_nt comparison in Test_FeMHS_471_Test6
+# source=july_orphan: in genome_list.tsv and on disk in library/added/, never registered with
+#   kraken2-build --add-to-library, so never indexed. Staging reuses the on-disk file (no download).
+# Lines starting with # are ignored by databases/rebuild_site_db.sh.
+accession	taxid	species	source	notes
+GCF_022369495.1	102862	Proteus penneri	july_orphan	Downloaded 2026-07-09, never registered; Wound infections; urease; NCBI taxid 102862
+GCF_039636765.1	103817	Janibacter terrae	july_orphan	Downloaded 2026-07-09, never registered; Skin/soil actinobacterium; NCBI taxid 103817
+GCF_002370525.2	106649	Acinetobacter guillouiae	july_orphan	Downloaded 2026-07-09, never registered; Skin Acinetobacter; NCBI taxid 106649
+GCF_016791605.1	1258	Peptoniphilus asaccharolyticus	july_orphan	Downloaded 2026-07-09, never registered; Chronic wound anaerobe
+GCF_900474615.1	1296	Mammaliicoccus sciuri	july_orphan	Downloaded 2026-07-09, never registered; Was Staphylococcus sciuri; genus reclassified 2022; skin commensal; zoonotic
+GCF_019047805.1	134034	Corynebacterium freneyi	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_039525805.1	161920	Dietzia natronolimnaea	july_orphan	Downloaded 2026-07-09, never registered; Skin/environment Dietzia; NCBI taxid 161920
+GCF_000696675.2	1833	Rhodococcus erythropolis	july_orphan	Downloaded 2026-07-09, never registered; Skin/environment Rhodococcus; lipid degrader; NCBI taxid 1833
+GCF_000024785.1	2054	Gordonia bronchialis	july_orphan	Downloaded 2026-07-09, never registered; Soil/skin actinomycete; sternotomy wound infections
+GCF_006384915.1	207340	Roseomonas mucosa	july_orphan	Downloaded 2026-07-09, never registered; Pink-pigmented skin bacterium; atopic dermatitis benefit; NCBI taxid 207340
+GCF_029542785.1	223818	Malassezia japonica	july_orphan	Downloaded 2026-07-09, never registered; Lipophilic skin yeast; seborrheic sites; NCBI taxid 223818
+GCF_016107655.1	234835	Brevibacterium antiquum	july_orphan	Downloaded 2026-07-09, never registered; Skin Brevibacterium; body odour association; NCBI taxid 234835
+GCF_001941945.1	257708	Roseomonas gilardii	july_orphan	Downloaded 2026-07-09, never registered; Pink-pigmented commensal; rare infections
+GCF_000177535.2	258224	Corynebacterium resistens	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal; multidrug resistant
+GCF_018603625.2	28037	Streptococcus mitis	july_orphan	Downloaded 2026-07-09, never registered; Skin isolate
+GCF_000212375.1	28123	Porphyromonas asaccharolytica	july_orphan	Downloaded 2026-07-09, never registered; Wound anaerobe; also vaginal; NCBI taxid 28123
+GCF_000412675.1	303	Pseudomonas putida	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_019704535.1	316	Stutzerimonas stutzeri	july_orphan	Downloaded 2026-07-09, never registered; Was Pseudomonas stutzeri; skin/wound isolate; denitrifier
+GCF_900445875.1	31943	Brevibacterium iodinum	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_022845615.1	322095	Porphyromonas somerae	july_orphan	Downloaded 2026-07-09, never registered; Skin chronic wound anaerobe
+GCF_000423485.1	33012	Propionimicrobium lymphophilum	july_orphan	Downloaded 2026-07-09, never registered; Skin lymph-node isolate; NCBI taxid 33012
+GCF_000758765.1	33032	Anaerococcus lactolyticus	july_orphan	Downloaded 2026-07-09, never registered; Skin wound anaerobe
+GCF_016127475.1	33037	Anaerococcus vaginalis	july_orphan	Downloaded 2026-07-09, never registered; Skin anaerobe
+GCF_039529845.1	366888	Brevibacterium samyangense	july_orphan	Downloaded 2026-07-09, never registered; Skin Brevibacterium; cheese/skin rind; NCBI taxid 366888
+GCF_001570785.1	36740	Dermabacter hominis	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal; folliculitis
+GCF_014636115.1	36911	Clavispora lusitaniae	july_orphan	Downloaded 2026-07-09, never registered; Was Candida lusitaniae; skin/nail candidiasis; amphotericin B resistance
+GCF_030384665.1	36914	Lodderomyces elongisporus	july_orphan	Downloaded 2026-07-09, never registered; Was Candida elongisposa; skin candidiasis; NCBI taxid 36914
+GCF_002209125.2	37326	Nocardia brasiliensis	july_orphan	Downloaded 2026-07-09, never registered; Cutaneous nocardiosis; tropical; NCBI taxid 37326
+GCF_900478045.1	38301	Corynebacterium minutissimum	july_orphan	Downloaded 2026-07-09, never registered; Erythrasma causative agent
+GCF_000747315.1	401472	Corynebacterium ureicelerivorans	july_orphan	Downloaded 2026-07-09, never registered; Skin Corynebacterium; axillary; NCBI taxid 401472
+GCF_018336855.1	40215	Acinetobacter junii	july_orphan	Downloaded 2026-07-09, never registered; Skin Acinetobacter; dry skin sites; NCBI taxid 40215
+GCF_003258335.1	40216	Acinetobacter radioresistens	july_orphan	Downloaded 2026-07-09, never registered; Skin Acinetobacter; radiation-resistant; NCBI taxid 40216
+GCF_028609805.1	441501	Corynebacterium massiliense	july_orphan	Downloaded 2026-07-09, never registered; Skin Corynebacterium; HMP isolate; NCBI taxid 441501
+GCF_014205115.1	455343	Micrococcus endophyticus	july_orphan	Downloaded 2026-07-09, never registered; Skin/plant endophyte Micrococcus; NCBI taxid 455343
+GCF_000149425.1	4929	Meyerozyma guilliermondii	july_orphan	Downloaded 2026-07-09, never registered; Was Candida guilliermondii; skin/nail candidiasis; NCBI taxid 4929
+GCF_000006445.2	4959	Debaryomyces hansenii	july_orphan	Downloaded 2026-07-09, never registered; Salt-tolerant skin yeast; common in dry skin sites; NCBI taxid 4959
+GCF_003013715.1	498019	Candidozyma auris	july_orphan	Downloaded 2026-07-09, never registered; Was Candida auris; multidrug-resistant; WHO critical priority; NCBI taxid 498019
+GCF_001659785.1	499555	Dietzia timorensis	july_orphan	Downloaded 2026-07-09, never registered; Skin lipophilic actinobacterium; NCBI taxid 499555
+GCF_009017415.1	5059	Aspergillus flavus	july_orphan	Downloaded 2026-07-09, never registered; Cutaneous aspergillosis; aflatoxin producer
+GCF_000002855.4	5061	Aspergillus niger	july_orphan	Downloaded 2026-07-09, never registered; Otomycosis; onychomycosis; skin saprophyte
+GCF_019048165.1	53374	Corynebacterium coyleae	july_orphan	Downloaded 2026-07-09, never registered; Urogenital/skin Corynebacterium; NCBI taxid 53374
+GCF_001570985.1	53458	Janibacter limosus	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_000018045.1	545	Citrobacter koseri	july_orphan	Downloaded 2026-07-09, never registered; Wound infections; neonatal meningitis risk
+GCF_904859905.1	546	Citrobacter freundii	july_orphan	Downloaded 2026-07-09, never registered; Opportunistic wound infections
+GCF_000182765.1	5480	Lodderomyces parapsilosis	july_orphan	Downloaded 2026-07-09, never registered; Was Candida parapsilosis; nail/skin candidiasis; neonatal risk; reclassified
+GCF_000006335.3	5482	Candida tropicalis	july_orphan	Downloaded 2026-07-09, never registered; Cutaneous candidiasis
+GCF_019048125.1	548	Klebsiella aerogenes	july_orphan	Downloaded 2026-07-09, never registered; Was Enterobacter aerogenes; wound infections; ESKAPE
+GCF_905331265.2	550	Enterobacter cloacae	july_orphan	Downloaded 2026-07-09, never registered; Wound/burn infections; ESKAPE pathogen
+GCF_000151425.1	5551	Trichophyton rubrum	july_orphan	Downloaded 2026-07-09, never registered; Most common dermatophyte; tinea pedis, onychomycosis
+GCF_006094455.1	582	Morganella morganii	july_orphan	Downloaded 2026-07-09, never registered; Wound infections; enterobacterial; intrinsic ampicillin resistance
+GCF_000069965.1	584	Proteus mirabilis	july_orphan	Downloaded 2026-07-09, never registered; Wound infections; swarming bacterium
+GCF_000422085.1	614	Serratia liquefaciens	july_orphan	Downloaded 2026-07-09, never registered; Wound infections; metalloprotease; NCBI taxid 614
+GCF_000151145.1	63405	Microsporum canis	july_orphan	Downloaded 2026-07-09, never registered; Dermatophyte; tinea capitis; zoonotic from cats/dogs
+GCF_016725245.1	71237	Mammaliicoccus vitulinus	july_orphan	Downloaded 2026-07-09, never registered; Was Staphylococcus vitulinus; genus reclassified 2022; skin commensal
+GCF_030408715.1	71254	Corynebacterium confusum	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_000002655.1	746128	Aspergillus fumigatus	july_orphan	Downloaded 2026-07-09, never registered; Cutaneous aspergillosis; immunocompromised host; NCBI taxid 746128
+GCF_000349305.1	76777	Malassezia sympodialis	july_orphan	Downloaded 2026-07-09, never registered; Atopic eczema IgE sensitisation
+GCF_001278385.1	77020	Malassezia pachydermatis	july_orphan	Downloaded 2026-07-09, never registered; Zoonotic; canine otitis; neonatal sepsis
+GCF_000010505.1	837	Porphyromonas gingivalis	july_orphan	Downloaded 2026-07-09, never registered; Skin wound anaerobe
+GCF_044872765.1	86171	Micrococcus antarcticus	july_orphan	Downloaded 2026-07-09, never registered; Skin commensal
+GCF_030408435.1	99807	Corynebacterium auriscanis	july_orphan	Downloaded 2026-07-09, never registered; Aural/skin Corynebacterium; dog-origin; zoonotic

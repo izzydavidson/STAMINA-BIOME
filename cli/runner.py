@@ -809,6 +809,11 @@ class RunConfig:
     # Database paths
     kraken2_db: str = ""  # Path to Kraken2 database (for sr_meta, lr_meta, lr_amp)
     emu_db: str = ""  # Path to Emu database (for lr_amp)
+    # Mixed-site runs (sr_meta, lr_meta): {site: kraken2_db_dir}; samples whose site has
+    # no entry fall back to kraken2_db. Per-sample sites come from the sample sheet.
+    site_dbs: Dict[str, str] = field(default_factory=dict)
+    # Optional common DB: every sample is also classified against it (between-site comparisons)
+    comparison_db: str = ""
 
     # Kraken2 classification params (lr_meta; also stored for sr_meta future use)
     # Applied to both vaginal and non-vaginal classifications for this run.
@@ -1153,6 +1158,95 @@ def _apply_kraken_params(cfg: Dict[str, Any], config: "RunConfig") -> None:
     cfg["tools"]["kraken2"]["nonvaginal"] = kp.copy()
 
 
+# Site-specific Kraken2 defaults (validated against CAMISIM ground truth); used for
+# mixed-site runs unless --kraken-confidence / --kraken-min-hit-groups override them.
+SITE_KRAKEN_DEFAULTS: Dict[str, Dict[str, Any]] = {
+    "vaginal": {"confidence": 0.02, "minimum_hit_groups": 2},
+    "gut": {"confidence": 0.03, "minimum_hit_groups": 4},
+    "oral": {"confidence": 0.04, "minimum_hit_groups": 4},
+    "skin": {"confidence": 0.03, "minimum_hit_groups": 4},
+    "other": {"confidence": 0.05, "minimum_hit_groups": 2},
+}
+
+_SITE_ALIASES = {
+    "vagina": "vaginal", "vag": "vaginal", "v": "vaginal", "vaginal_swab": "vaginal",
+    "stool": "gut", "fecal": "gut", "faecal": "gut", "feces": "gut", "faeces": "gut",
+    "mouth": "oral", "saliva": "oral", "buccal": "oral",
+}
+
+
+def normalize_site(value: str) -> str:
+    """Normalise a body-site label (matches main/pipelines/site_routing.sh)."""
+    v = (value or "").strip().lower()
+    return _SITE_ALIASES.get(v, v)
+
+
+def normalize_barcode_key(value: str) -> str:
+    """BC01 / barcode1 / barcode01 -> barcode01 (matches pipeline sample IDs and the
+    R relabelling); any other sample ID is returned unchanged."""
+    m = re.match(r"^(?:barcode|bc)0*(\d+)$", (value or "").strip(), re.IGNORECASE)
+    return f"barcode{int(m.group(1)):02d}" if m else (value or "").strip()
+
+
+def read_sample_sheet(path: Path):
+    """Parse a barcode sample sheet (CSV/TSV) -> (sample_map, sample_sites).
+
+    Columns: barcode (required), sample_name (optional), site / sample_type /
+    body_site (optional, for mixed-site runs).
+    """
+    import csv
+
+    delimiter = "\t" if path.suffix.lower() in (".tsv", ".txt") else ","
+    sample_map: Dict[str, str] = {}
+    sample_sites: Dict[str, str] = {}
+    try:
+        with open(path, newline="") as fh:
+            reader = csv.DictReader(fh, delimiter=delimiter)
+            for row in reader:
+                row = {(k or "").strip().lower(): (v or "") for k, v in row.items()}
+                barcode = normalize_barcode_key(row.get("barcode", ""))
+                if not barcode:
+                    continue
+                name = row.get("sample_name", "").strip()
+                site = normalize_site(row.get("site") or row.get("sample_type") or row.get("body_site") or "")
+                if name:
+                    sample_map[barcode] = name
+                if site:
+                    sample_sites[barcode] = site
+    except Exception as exc:
+        raise RunnerError(f"Could not parse sample sheet '{path}': {exc}")
+    return sample_map, sample_sites
+
+
+def _apply_site_routing(cfg: Dict[str, Any], config: "RunConfig", sample_sites: Dict[str, str]) -> None:
+    """Per-site Kraken2 DBs/params + optional comparison DB (sr_meta, lr_meta)."""
+    if config.pipeline not in ("sr_meta", "lr_meta"):
+        return
+    kraken2 = cfg.setdefault("tools", {}).setdefault("kraken2", {})
+    if config.site_dbs:
+        kraken2["db_by_site"] = {
+            normalize_site(site): str(Path(db).expanduser().resolve())
+            for site, db in config.site_dbs.items()
+        }
+    sites = set(sample_sites.values()) | set(kraken2.get("db_by_site", {}).keys())
+    # Site defaults only for genuinely mixed runs; single-site runs keep their
+    # existing (global) parameters unchanged.
+    is_mixed = config.sample_type == "mixed" or len(set(sample_sites.values())) > 1 or bool(config.site_dbs)
+    if sites and is_mixed:
+        params_by_site = {}
+        for site in sorted(sites):
+            p = dict(SITE_KRAKEN_DEFAULTS.get(site, SITE_KRAKEN_DEFAULTS["other"]))
+            if config.kraken_confidence is not None:
+                p["confidence"] = config.kraken_confidence
+            if config.kraken_min_hit_groups is not None:
+                p["minimum_hit_groups"] = config.kraken_min_hit_groups
+            params_by_site[site] = p
+        if params_by_site:
+            kraken2["params_by_site"] = params_by_site
+    if config.comparison_db:
+        kraken2["comparison_db"] = str(Path(config.comparison_db).expanduser().resolve())
+
+
 def _apply_emu_params(cfg: Dict[str, Any], config: "RunConfig") -> None:
     """Inject emu_min_pid into cfg["tools"]["emu"] if set (lr_amp only)."""
     if config.emu_min_pid is None or config.pipeline != "lr_amp":
@@ -1306,7 +1400,22 @@ def build_config(config: RunConfig, repo_root: Optional[Path] = None) -> Dict[st
     # - Explicitly requested via --valencia flag, OR
     # - sample_type is "vaginal" (auto-enable for vaginal microbiome)
     # But NOT if --no-valencia is set
-    is_vaginal = config.sample_type.lower() in ("vaginal", "vaginal_swab", "vagina")
+    # Per-sample sites (mixed-site runs) come from the sample sheet's site column
+    sheet_map: Dict[str, str] = {}
+    sheet_sites: Dict[str, str] = {}
+    if config.sample_sheet:
+        sample_sheet_src = Path(config.sample_sheet).resolve()
+        if not sample_sheet_src.exists():
+            raise RunnerError(f"Sample sheet not found: {sample_sheet_src}")
+        sheet_map, sheet_sites = read_sample_sheet(sample_sheet_src)
+    if config.sample_type == "mixed" and not sheet_sites:
+        raise RunnerError(
+            "--sample-type mixed needs a --sample-sheet with a 'site' column "
+            "(barcode, sample_name, site) so each sample gets its body site."
+        )
+
+    is_vaginal = config.sample_type.lower() in ("vaginal", "vaginal_swab", "vagina") or \
+        any(site == "vaginal" for site in sheet_sites.values())
     valencia_enabled = (config.valencia or is_vaginal) and not config.no_valencia
 
     # Add postprocess config (uniform format across all pipelines)
@@ -1329,29 +1438,13 @@ def build_config(config: RunConfig, repo_root: Optional[Path] = None) -> Dict[st
     # same downstream apply_sample_map() in the R postprocess scripts picks it up
     # regardless of whether the run was launched from the GUI or the CLI.
     if config.sample_sheet:
-        sample_sheet_src = Path(config.sample_sheet).resolve()
-        if not sample_sheet_src.exists():
-            raise RunnerError(f"Sample sheet not found: {sample_sheet_src}")
-
         import csv
 
-        delimiter = "\t" if sample_sheet_src.suffix.lower() in (".tsv", ".txt") else ","
-        sample_map: Dict[str, str] = {}
-        try:
-            with open(sample_sheet_src, newline="") as fh:
-                reader = csv.DictReader(fh, delimiter=delimiter)
-                for row in reader:
-                    barcode = (row.get("barcode") or "").strip()
-                    name = (row.get("sample_name") or "").strip()
-                    if barcode and name:
-                        sample_map[barcode] = name
-        except Exception as exc:
-            raise RunnerError(f"Could not parse sample sheet '{sample_sheet_src}': {exc}")
-
-        if not sample_map:
+        sample_map = sheet_map
+        if not sample_map and not sheet_sites:
             raise RunnerError(
                 f"Sample sheet '{sample_sheet_src}' has no usable rows "
-                "(expected columns: barcode, sample_name)"
+                "(expected columns: barcode, sample_name[, site])"
             )
 
         # Written as a SIBLING of run_dir (like the config JSON itself), not inside it —
@@ -1361,11 +1454,19 @@ def build_config(config: RunConfig, repo_root: Optional[Path] = None) -> Dict[st
         outdir.mkdir(parents=True, exist_ok=True)
         with open(sample_sheet_out, "w", newline="") as fh:
             writer = csv.writer(fh, delimiter="\t")
-            writer.writerow(["barcode", "sample_name"])
-            for barcode, name in sample_map.items():
-                writer.writerow([barcode, name])
+            writer.writerow(["barcode", "sample_name"] + (["site"] if sheet_sites else []))
+            for barcode in list(dict.fromkeys(list(sample_map) + list(sheet_sites))):
+                row = [barcode, sample_map.get(barcode, barcode)]
+                if sheet_sites:
+                    row.append(sheet_sites.get(barcode, ""))
+                writer.writerow(row)
 
-        cfg["sample_map"] = sample_map
+        if sample_map:
+            cfg["sample_map"] = sample_map
+        if sheet_sites:
+            # Embedded in the config (not only the TSV) so modules running in a
+            # container see per-sample sites without needing the sheet mounted.
+            cfg["sample_sites"] = sheet_sites
         cfg["sample_sheet"] = str(sample_sheet_out)
         for step_name in ("heatmap", "piechart", "stacked_bar", "results_csv"):
             if cfg["postprocess"]["steps"].get(step_name):
@@ -1516,6 +1617,7 @@ def build_config(config: RunConfig, repo_root: Optional[Path] = None) -> Dict[st
         _apply_kraken_params(cfg, config)
         _apply_bracken_params(cfg, config)
         _apply_kraken_memory_mapping(cfg, config)
+        _apply_site_routing(cfg, config, sheet_sites)
         # Valencia centroids path - auto-detect from multiple locations
         # Check multiple locations for VALENCIA centroids:
         # 1. tools/VALENCIA/ (installed by setup in bundle)
@@ -1728,6 +1830,7 @@ def build_config(config: RunConfig, repo_root: Optional[Path] = None) -> Dict[st
             },
         }
         _apply_kraken_params(cfg, config)
+        _apply_site_routing(cfg, config, sheet_sites)
         _apply_emu_params(cfg, config)
         _apply_bracken_params(cfg, config)
         _apply_kraken_memory_mapping(cfg, config)
@@ -1861,6 +1964,28 @@ def check_qc_tools(config_dict: Dict[str, Any], repo_root: Path) -> Dict[str, An
     return result
 
 
+def _validate_site_dbs(config_dict: Dict[str, Any]) -> List[str]:
+    """Mixed-site runs: every per-sample site needs a DB (its own or the global fallback)."""
+    errors: List[str] = []
+    kraken2 = config_dict.get("tools", {}).get("kraken2", {}) or {}
+    db_by_site = kraken2.get("db_by_site") or {}
+    for site, db in db_by_site.items():
+        if not Path(db).is_dir():
+            errors.append(f"Kraken2 database for site '{site}' not found: {db}")
+    comparison_db = kraken2.get("comparison_db") or ""
+    if comparison_db and not Path(comparison_db).is_dir():
+        errors.append(f"Comparison Kraken2 database not found: {comparison_db}")
+    sites = set((config_dict.get("sample_sites") or {}).values())
+    if sites and not kraken2.get("db"):
+        missing = sorted(site for site in sites if site not in db_by_site)
+        if missing:
+            errors.append(
+                "No Kraken2 database for site(s): " + ", ".join(missing)
+                + ". Add --site-db SITE=PATH for each, or --db as a fallback."
+            )
+    return errors
+
+
 def validate_preflight(pipeline: str, config_dict: Dict[str, Any], use_container: bool = True) -> List[str]:
     """
     Pre-flight validation to check required dependencies before running.
@@ -1895,9 +2020,10 @@ def validate_preflight(pipeline: str, config_dict: Dict[str, Any], use_container
             )
 
     elif pipeline == "sr_meta":
-        # sr_meta requires Kraken2 database
+        # sr_meta requires Kraken2 database (global, or one per site for mixed-site runs)
         kraken_db = config_dict.get("tools", {}).get("kraken2", {}).get("db", "")
-        if not kraken_db:
+        errors.extend(_validate_site_dbs(config_dict))
+        if not kraken_db and not config_dict.get("tools", {}).get("kraken2", {}).get("db_by_site"):
             errors.append(
                 f"Kraken2 database not configured. "
                 f"Set tools.kraken2.db in config."
@@ -1921,9 +2047,10 @@ def validate_preflight(pipeline: str, config_dict: Dict[str, Any], use_container
                 )
 
     elif pipeline == "lr_meta":
-        # lr_meta requires Kraken2 database
+        # lr_meta requires Kraken2 database (global, or one per site for mixed-site runs)
         kraken_db = config_dict.get("tools", {}).get("kraken2", {}).get("db", "")
-        if not kraken_db:
+        errors.extend(_validate_site_dbs(config_dict))
+        if not kraken_db and not config_dict.get("tools", {}).get("kraken2", {}).get("db_by_site"):
             errors.append(
                 f"Kraken2 database not configured. "
                 f"Set tools.kraken2.db in config."
@@ -2251,6 +2378,29 @@ def run_pipeline(
             container_config_dict["tools"]["kraken2"]["db"] = kraken2_db_container
             if config.verbose:
                 print(f"[stamina-biome] Mounting Kraken2 DB: {kraken2_db_host} -> {kraken2_db_container}")
+
+        # Mixed-site runs: mount each per-site DB and the optional comparison DB
+        # (copy tools.kraken2 so host paths in config_dict are left untouched)
+        container_config_dict["tools"] = dict(container_config_dict.get("tools") or {})
+        container_kraken2 = dict(container_config_dict["tools"].get("kraken2") or {})
+        container_config_dict["tools"]["kraken2"] = container_kraken2
+        host_site_dbs = dict(container_kraken2.get("db_by_site") or {})
+        if host_site_dbs:
+            container_kraken2["db_by_site"] = dict(host_site_dbs)
+        for site, db_host in host_site_dbs.items():
+            if Path(db_host).exists():
+                safe = re.sub(r"[^a-z0-9_]", "", site.lower())
+                db_container = f"/db/kraken2_{safe}"
+                extra_mounts.append((db_host, db_container))
+                container_kraken2["db_by_site"][site] = db_container
+                if config.verbose:
+                    print(f"[stamina-biome] Mounting Kraken2 DB ({site}): {db_host} -> {db_container}")
+        comparison_host = container_kraken2.get("comparison_db") or ""
+        if comparison_host and Path(comparison_host).exists():
+            extra_mounts.append((comparison_host, "/db/kraken2_comparison"))
+            container_kraken2["comparison_db"] = "/db/kraken2_comparison"
+            if config.verbose:
+                print(f"[stamina-biome] Mounting comparison Kraken2 DB: {comparison_host} -> /db/kraken2_comparison")
 
         # Mount Emu database (from CLI arg or auto-detected path)
         emu_db_host_path = getattr(config, '_emu_db_host_path', None)

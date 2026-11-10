@@ -19,6 +19,96 @@ pp_step <- function(key, output_selected, postprocess_enabled) {
   if (is.list(x)) paste0(x$enabled, " [+params]") else as.character(x)
 }
 
+# Sample sheet location: a SIBLING of the run directory (like config_<run_id>.json).
+# stamina_biome_run.sh does `rm -rf <run_dir>` on force_overwrite, which would delete
+# a sheet written inside the run directory before the pipeline (and R plots) read it.
+sample_sheet_path_for <- function(params) {
+  file.path(params$output_dir, paste0("sample_sheet_", params$run_id, ".tsv"))
+}
+
+# Bracken read lengths available in a Kraken2 DB (database{N}mers.kmer_distrib)
+bracken_readlens_in_db <- function(db_path) {
+  if (is.null(db_path) || !nzchar(db_path) || !dir.exists(db_path)) return(integer(0))
+  files <- list.files(db_path, pattern = "^database[0-9]+mers\\.kmer_distrib$")
+  lens  <- suppressWarnings(as.integer(gsub("^database([0-9]+)mers\\.kmer_distrib$", "\\1", files)))
+  lens[!is.na(lens)]
+}
+
+# Mixed sample types (one pooled run, several body sites).
+# Adds per-sample sites, per-site Kraken2 DBs / params / Bracken read lengths, the
+# optional comparison DB and VALENCIA (only for the vaginal samples). No-op for
+# single-site runs, so their configs are unchanged.
+#   UI: selectInput("sample_type") == "mixed" + per-row selectInput("bc_site_<i>")
+#   Config: sample_sites, tools.kraken2.db_by_site / params_by_site / comparison_db,
+#           tools.bracken.readlen_by_site
+# bracken_target: NULL = longest profile in the DB (long reads); a number = profile
+# closest to that read length (short reads use 150).
+apply_mixed_site_config <- function(config, params, kraken = TRUE, valencia_centroids_path = "",
+                                    postprocess_enabled = 0L, bracken_target = NULL) {
+  sites <- params$sample_sites
+  if (is.null(sites) || length(sites) == 0) return(config)
+  config$sample_sites <- sites
+  if (is.null(config$sample_sheet)) config$sample_sheet <- sample_sheet_path_for(params)
+  cat("[WIRE] sample_sites:", paste(names(sites), unlist(sites), sep = "=", collapse = ", "), "\n")
+
+  if (kraken) {
+    site_dbs <- params$site_dbs
+    if (!is.null(site_dbs) && length(site_dbs) > 0) {
+      config$tools$kraken2$db_by_site <- site_dbs
+      cat("[WIRE] tools.kraken2.db_by_site:", paste(names(site_dbs), unlist(site_dbs), sep = "=", collapse = ", "), "\n")
+
+      # Bracken: per-site read length that exists in that site's DB
+      rl_pref <- params$bracken_readlen %||% "auto"
+      readlen_by_site <- list()
+      for (site in names(site_dbs)) {
+        available <- bracken_readlens_in_db(site_dbs[[site]])
+        if (length(available) == 0) next
+        pref <- suppressWarnings(as.integer(rl_pref))
+        readlen_by_site[[site]] <- if (!is.na(pref) && pref %in% available) {
+          pref
+        } else if (is.null(bracken_target)) {
+          max(available)
+        } else {
+          available[which.min(abs(available - bracken_target))]
+        }
+      }
+      if (length(readlen_by_site) > 0) {
+        config$tools$bracken$readlen_by_site <- readlen_by_site
+        cat("[WIRE] tools.bracken.readlen_by_site:", paste(names(readlen_by_site), unlist(readlen_by_site), sep = "=", collapse = ", "), "\n")
+      }
+    }
+    site_params <- params$site_params
+    if (!is.null(site_params) && length(site_params) > 0) {
+      config$tools$kraken2$params_by_site <- site_params
+      cat("[WIRE] tools.kraken2.params_by_site:",
+          paste(names(site_params), vapply(site_params, function(p) paste0(p$confidence, "/", p$minimum_hit_groups), ""),
+                sep = "=", collapse = ", "), "\n")
+    }
+    cmp <- trimws(params$comparison_db %||% "")
+    if (nchar(cmp) > 0) {
+      config$tools$kraken2$comparison_db <- cmp
+      config$tools$kraken2$comparison_params <- list(confidence = 0.05, minimum_hit_groups = 2L)
+      cat("[WIRE] tools.kraken2.comparison_db:", cmp, "\n")
+    }
+  }
+
+  # VALENCIA applies to the vaginal samples only (the module restricts it to them)
+  if ("vaginal" %in% unlist(sites) && is.null(config$valencia)) {
+    valencia_enabled <- if (!is.null(params$valencia) && params$valencia == "yes") 1L else 0L
+    config$valencia <- list(
+      enabled       = valencia_enabled,
+      mode          = "auto",
+      centroids_csv = valencia_centroids_path
+    )
+    config$postprocess$steps$valencia <- if (postprocess_enabled == 1L && valencia_enabled == 1L) 1L else 0L
+    cat("[WIRE] valencia.enabled (vaginal samples only):", valencia_enabled, "\n")
+  } else if (!"vaginal" %in% unlist(sites) && !is.null(config$valencia)) {
+    config$valencia$enabled <- 0L
+    config$postprocess$steps$valencia <- 0L
+  }
+  config
+}
+
 generate_sr_amp_config <- function(params) {
   cat("\n========== BUILDING SR_AMP CONFIG ==========\n")
 
@@ -339,7 +429,7 @@ generate_sr_amp_config <- function(params) {
 
   if (!is.null(sample_map)) {
     config$sample_map   <- sample_map
-    sample_sheet_path   <- file.path(params$output_dir, params$run_id, "sample_sheet.tsv")
+    sample_sheet_path   <- sample_sheet_path_for(params)
     config$sample_sheet <- sample_sheet_path
 
     for (sn in c("heatmap", "piechart", "stacked_bar", "results_csv")) {
@@ -354,6 +444,11 @@ generate_sr_amp_config <- function(params) {
     cat("[WIRE] sample_map:", length(sample_map), "entries\n")
     cat("[WIRE] sample_sheet:", sample_sheet_path, "\n")
   }
+
+  # --- mixed sample types (per-sample sites, per-site DBs) ---
+  config <- apply_mixed_site_config(config, params, kraken = FALSE,
+                                    valencia_centroids_path = valencia_centroids_path,
+                                    postprocess_enabled = postprocess_enabled)
 
   # --- pre-return audit ---
   cat("\n[AUDIT] sr_amp config field check:\n")
@@ -706,7 +801,7 @@ generate_sr_meta_config <- function(params) {
 
   if (!is.null(sample_map)) {
     config$sample_map   <- sample_map
-    sample_sheet_path   <- file.path(params$output_dir, params$run_id, "sample_sheet.tsv")
+    sample_sheet_path   <- sample_sheet_path_for(params)
     config$sample_sheet <- sample_sheet_path
 
     for (sn in c("heatmap", "piechart", "stacked_bar", "results_csv")) {
@@ -721,6 +816,12 @@ generate_sr_meta_config <- function(params) {
     cat("[WIRE] sample_map:", length(sample_map), "entries\n")
     cat("[WIRE] sample_sheet:", sample_sheet_path, "\n")
   }
+
+  # --- mixed sample types (per-sample sites, per-site DBs) ---
+  config <- apply_mixed_site_config(config, params, kraken = TRUE,
+                                    valencia_centroids_path = valencia_centroids_path_sr,
+                                    postprocess_enabled = postprocess_enabled,
+                                    bracken_target = 150L)
 
   # --- pre-return audit ---
   cat("\n[AUDIT] sr_meta config field check:\n")
@@ -1098,7 +1199,7 @@ generate_lr_amp_config <- function(params) {
 
   if (!is.null(sample_map)) {
     config$sample_map   <- sample_map
-    sample_sheet_path   <- file.path(params$output_dir, params$run_id, "sample_sheet.tsv")
+    sample_sheet_path   <- sample_sheet_path_for(params)
     config$sample_sheet <- sample_sheet_path
 
     # Embed sample_sheet path in each enabled postprocess step so R scripts receive it
@@ -1114,6 +1215,11 @@ generate_lr_amp_config <- function(params) {
     cat("[WIRE] sample_map:", length(sample_map), "entries\n")
     cat("[WIRE] sample_sheet:", sample_sheet_path, "\n")
   }
+
+  # --- mixed sample types (per-sample sites, per-site DBs) ---
+  config <- apply_mixed_site_config(config, params, kraken = FALSE,
+                                    valencia_centroids_path = valencia_centroids_path,
+                                    postprocess_enabled = postprocess_enabled)
 
   # --- pre-return audit ---
   cat("\n[AUDIT] lr_amp config field check:\n")
@@ -1562,7 +1668,7 @@ generate_lr_meta_config <- function(params) {
 
   if (!is.null(sample_map)) {
     config$sample_map   <- sample_map
-    sample_sheet_path   <- file.path(params$output_dir, params$run_id, "sample_sheet.tsv")
+    sample_sheet_path   <- sample_sheet_path_for(params)
     config$sample_sheet <- sample_sheet_path
 
     # Embed sample_sheet path in each enabled postprocess step so R scripts receive it
@@ -1578,6 +1684,11 @@ generate_lr_meta_config <- function(params) {
     cat("[WIRE] sample_map:", length(sample_map), "entries\n")
     cat("[WIRE] sample_sheet:", sample_sheet_path, "\n")
   }
+
+  # --- mixed sample types (per-sample sites, per-site DBs) ---
+  config <- apply_mixed_site_config(config, params, kraken = TRUE,
+                                    valencia_centroids_path = valencia_centroids_path,
+                                    postprocess_enabled = postprocess_enabled)
 
   # --- pre-return audit ---
   cat("\n[AUDIT] lr_meta config field check:\n")
@@ -1644,15 +1755,21 @@ save_config <- function(config, run_id) {
 
   cat("Config written to:", config_file, "\n")
 
-  # Write sample sheet TSV if sample_map is present
-  if (!is.null(config$sample_map) && length(config$sample_map) > 0 && !is.null(config$sample_sheet)) {
+  # Write sample sheet TSV if sample_map (or per-sample sites) is present
+  has_map   <- !is.null(config$sample_map) && length(config$sample_map) > 0
+  has_sites <- !is.null(config$sample_sites) && length(config$sample_sites) > 0
+  if ((has_map || has_sites) && !is.null(config$sample_sheet)) {
     tsv_path <- config$sample_sheet
     dir.create(dirname(tsv_path), recursive = TRUE, showWarnings = FALSE)
+    barcodes <- unique(c(names(config$sample_map), names(config$sample_sites)))
     tsv_df <- data.frame(
-      barcode     = names(config$sample_map),
-      sample_name = unlist(config$sample_map),
+      barcode     = barcodes,
+      sample_name = vapply(barcodes, function(b) as.character(config$sample_map[[b]] %||% b), ""),
       stringsAsFactors = FALSE
     )
+    if (has_sites) {
+      tsv_df$site <- vapply(barcodes, function(b) as.character(config$sample_sites[[b]] %||% ""), "")
+    }
     write.table(tsv_df, tsv_path, sep = "\t", row.names = FALSE, quote = FALSE)
     cat("Sample sheet written to:", tsv_path, "\n")
   }
