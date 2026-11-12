@@ -61,6 +61,23 @@ if (is.null(outputs_json) || is.null(out_dir)) {
 outputs <- fromJSON(outputs_json)
 params <- tryCatch(fromJSON(params_json), error = function(e) list())
 
+# Shared sample ordering: samples in the order entered in the GUI/CLI sample sheet
+local({
+  f <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)[1])
+  d <- if (!is.na(f) && nzchar(f)) dirname(normalizePath(f)) else getwd()
+  for (p in c(file.path(d, "sample_order.R"),
+              file.path(d, "..", "..", "..", "..", "main", "pipelines", "postprocess", "r", "sample_order.R"))) {
+    if (file.exists(p)) { sys.source(p, envir = globalenv()); break }
+  }
+})
+if (!exists("sample_levels", mode = "function")) {
+  sample_levels <- function(ids, params = list()) sort(unique(as.character(ids)))
+  group_levels <- function(sample_ids, groups, sample_lv) {
+    unique(as.character(groups)[order(match(as.character(sample_ids), sample_lv))])
+  }
+  order_rows_by_sample <- function(df, col = "sample_id", params = list()) df
+}
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # Apply barcode → sample name mapping from sample sheet (if provided)
@@ -95,7 +112,10 @@ legend_columns <- 1
 # ----------------------------
 
 # Helper function to generate stacked bar chart
-generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top_n, out_dir) {
+# file_suffix / title_suffix: used for the comparison-DB variant of the plot.
+# Mixed sample-type runs (a `site` column with >1 value) are faceted by sample type.
+generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top_n, out_dir,
+                                 file_suffix = "", title_suffix = "") {
   if (is.null(data) || nrow(data) == 0) {
     cat("[stacked_bar]", rank_label, ": No data available\n")
     return(FALSE)
@@ -118,9 +138,13 @@ generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top
   data <- data %>%
     mutate(taxon_grouped = ifelse(!!sym(taxon_col) %in% top_taxa, !!sym(taxon_col), "Other"))
 
+  facet_by_site <- "site" %in% colnames(data) &&
+    length(unique(data$site[!is.na(data$site) & nzchar(data$site)])) > 1
+  if (!facet_by_site) data$site <- ""
+
   # Aggregate with grouped taxa
   plot_data <- data %>%
-    group_by(sample_id, taxon_grouped) %>%
+    group_by(site, sample_id, taxon_grouped) %>%
     summarise(abundance = sum(!!sym(abundance_col)), .groups = "drop")
 
   # Normalize to proportions (ensure each sample sums to 1)
@@ -136,6 +160,15 @@ generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top
     summarise(total = sum(abundance), .groups = "drop") %>%
     arrange(desc(total)) %>%
     pull(taxon_grouped)
+
+  plot_data$site_label <- tools::toTitleCase(plot_data$site)
+
+  # Samples in the order they were entered; site panels in the order their
+  # first sample was entered
+  sample_lv <- sample_levels(plot_data$sample_id, params)
+  plot_data$sample_id <- factor(as.character(plot_data$sample_id), levels = sample_lv)
+  plot_data$site_label <- factor(plot_data$site_label,
+                                 levels = group_levels(plot_data$sample_id, plot_data$site_label, sample_lv))
 
   taxa_order <- c(taxa_order, "Other")
   plot_data$taxon_grouped <- factor(plot_data$taxon_grouped, levels = rev(taxa_order))
@@ -153,7 +186,7 @@ generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top
     geom_bar(stat = "identity", position = "stack") +
     scale_fill_manual(values = colors) +
     labs(
-      title = paste(rank_label, "Relative Abundance (Top", top_n, ")"),
+      title = paste0(rank_label, " Relative Abundance (Top ", top_n, ")", title_suffix),
       x = "Sample",
       y = "Relative Abundance",
       fill = rank_label
@@ -180,13 +213,17 @@ generate_stacked_bar <- function(data, taxon_col, abundance_col, rank_label, top
       )
     )
 
+  if (facet_by_site) {
+    p <- p + facet_grid(. ~ site_label, scales = "free_x", space = "free_x")
+  }
+
   # Save PNG
-  out_png <- file.path(out_dir, paste0("stacked_bar_", tolower(rank_label), ".png"))
+  out_png <- file.path(out_dir, paste0("stacked_bar_", tolower(rank_label), file_suffix, ".png"))
   ggsave(out_png, p, width = 10, height = 7, dpi = 150, bg = "white")
   cat("[stacked_bar] Generated:", out_png, "\n")
 
   # Save PDF
-  out_pdf <- file.path(out_dir, paste0("stacked_bar_", tolower(rank_label), ".pdf"))
+  out_pdf <- file.path(out_dir, paste0("stacked_bar_", tolower(rank_label), file_suffix, ".pdf"))
   ggsave(out_pdf, p, width = 10, height = 7, bg = "white")
   cat("[stacked_bar] Generated:", out_pdf, "\n")
 
@@ -223,6 +260,18 @@ if (module_name %in% c("lr_meta", "sr_meta", "lr_amp") || is.null(module_name)) 
       cat("[stacked_bar] Loaded species data:", nrow(species_data), "rows,", length(unique(species_data$species)), "taxa\n")
       if (generate_stacked_bar(species_data, "species", "fraction", "Species", top_n, out_dir)) {
         generated_any <- TRUE
+      }
+    }
+
+    # Comparison DB (mixed sample types): every sample against one shared DB
+    for (rank in c("genus", "species")) {
+      comp_tidy <- file.path(postprocess_dir, paste0("comparison_db_", rank, "_tidy.csv"))
+      if (file.exists(comp_tidy)) {
+        comp_data <- read.csv(comp_tidy, stringsAsFactors = FALSE)
+        comp_data <- apply_sample_map(comp_data, "sample_id", params)
+        cat("[stacked_bar] Loaded comparison DB", rank, "data:", nrow(comp_data), "rows\n")
+        generate_stacked_bar(comp_data, rank, "fraction", tools::toTitleCase(rank), top_n, out_dir,
+                             file_suffix = "_comparison_db", title_suffix = " - comparison database")
       }
     }
   }

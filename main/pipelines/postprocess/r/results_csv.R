@@ -46,6 +46,23 @@ if (is.null(outputs_json) || is.null(out_dir)) {
 outputs <- fromJSON(outputs_json)
 params <- tryCatch(fromJSON(params_json), error = function(e) list())
 
+# Shared sample ordering: samples in the order entered in the GUI/CLI sample sheet
+local({
+  f <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)[1])
+  d <- if (!is.na(f) && nzchar(f)) dirname(normalizePath(f)) else getwd()
+  for (p in c(file.path(d, "sample_order.R"),
+              file.path(d, "..", "..", "..", "..", "main", "pipelines", "postprocess", "r", "sample_order.R"))) {
+    if (file.exists(p)) { sys.source(p, envir = globalenv()); break }
+  }
+})
+if (!exists("sample_levels", mode = "function")) {
+  sample_levels <- function(ids, params = list()) sort(unique(as.character(ids)))
+  group_levels <- function(sample_ids, groups, sample_lv) {
+    unique(as.character(groups)[order(match(as.character(sample_ids), sample_lv))])
+  }
+  order_rows_by_sample <- function(df, col = "sample_id", params = list()) df
+}
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # Apply barcode → sample name mapping from sample sheet (if provided)
@@ -105,13 +122,16 @@ if (module_name %in% c("sr_meta", "lr_meta", "lr_amp") || is.null(module_name)) 
       species_df <- read.csv(species_tidy, stringsAsFactors = FALSE)
       species_df$rank <- "species"
       species_df$taxon <- species_df$species
-      species_df <- species_df[, c("sample_id", "taxid", "taxon", "rank", "reads", "fraction")]
+      # Mixed sample-type runs carry a per-sample `site` column; keep it
+      keep_cols <- c("sample_id", "taxid", "taxon", "rank", "reads", "fraction",
+                     if ("site" %in% colnames(species_df)) "site")
+      species_df <- species_df[, keep_cols]
 
       if (file.exists(genus_tidy)) {
         genus_df <- read.csv(genus_tidy, stringsAsFactors = FALSE)
         genus_df$rank <- "genus"
         genus_df$taxon <- genus_df$genus
-        genus_df <- genus_df[, c("sample_id", "taxid", "taxon", "rank", "reads", "fraction")]
+        genus_df <- genus_df[, intersect(keep_cols, c(colnames(genus_df), "taxon", "rank"))]
 
         taxa_data <- rbind(species_df, genus_df)
       } else {
@@ -223,6 +243,7 @@ if (is.null(taxa_data) && (module_name == "sr_amp" || is.null(module_name))) {
 # Apply barcode → sample name mapping
 if (!is.null(taxa_data) && nrow(taxa_data) > 0) {
   taxa_data <- apply_sample_map(taxa_data, "sample_id", params)
+  taxa_data <- order_rows_by_sample(taxa_data, "sample_id", params)
 }
 
 # Write taxonomy results
@@ -260,6 +281,7 @@ if (module_name == "sr_amp" || is.null(module_name)) {
 }
 
 if (!is.null(alpha_data) && nrow(alpha_data) > 0) {
+  alpha_data <- order_rows_by_sample(alpha_data, "sample_id", params)
   alpha_out <- file.path(out_dir, "alpha_diversity.csv")
   write.csv(alpha_data, alpha_out, row.names = FALSE)
   cat("[results_csv] Wrote alpha diversity results:", alpha_out, "\n")

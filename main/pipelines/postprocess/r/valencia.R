@@ -45,6 +45,23 @@ if (is.null(outputs_json) || is.null(out_dir)) {
 outputs <- fromJSON(outputs_json)
 params <- tryCatch(fromJSON(params_json), error = function(e) list())
 
+# Shared sample ordering: samples in the order entered in the GUI/CLI sample sheet
+local({
+  f <- sub("^--file=", "", grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)[1])
+  d <- if (!is.na(f) && nzchar(f)) dirname(normalizePath(f)) else getwd()
+  for (p in c(file.path(d, "sample_order.R"),
+              file.path(d, "..", "..", "..", "..", "main", "pipelines", "postprocess", "r", "sample_order.R"))) {
+    if (file.exists(p)) { sys.source(p, envir = globalenv()); break }
+  }
+})
+if (!exists("sample_levels", mode = "function")) {
+  sample_levels <- function(ids, params = list()) sort(unique(as.character(ids)))
+  group_levels <- function(sample_ids, groups, sample_lv) {
+    unique(as.character(groups)[order(match(as.character(sample_ids), sample_lv))])
+  }
+  order_rows_by_sample <- function(df, col = "sample_id", params = list()) df
+}
+
 cat("[valencia] Module:", module_name, "\n")
 cat("[valencia] Output dir:", out_dir, "\n")
 
@@ -169,200 +186,172 @@ if (is.na(sample_col)) {
   cat("[valencia] Using first column as sample ID:", sample_col, "\n")
 }
 
-# Generate CST distribution bar chart
-if (!is.na(cst_col)) {
-  cst_counts <- table(valencia_data[[cst_col]])
-  cst_df <- as.data.frame(cst_counts)
-  colnames(cst_df) <- c("CST", "count")
-  cst_df <- cst_df[order(-cst_df$count), ]
+# Samples in the order they were entered in the GUI/CLI
+valencia_data <- order_rows_by_sample(valencia_data, sample_col, params)
 
-  # CST colors (standard CST coloring)
-  cst_colors <- c(
-    "I" = "#1f77b4",
-    "II" = "#ff7f0e",
-    "III" = "#2ca02c",
-    "IV-A" = "#d62728",
-    "IV-B" = "#9467bd",
-    "IV-C" = "#8c564b",
-    "V" = "#e377c2",
-    "I-A" = "#1f77b4",
-    "I-B" = "#aec7e8",
-    "III-A" = "#2ca02c",
-    "III-B" = "#98df8a"
-  )
-
-  out_png <- file.path(out_dir, "cst_distribution.png")
-
-  png(out_png, width = 600, height = 500, res = 150, bg = "white")
-  par(mar = c(6, 4, 3, 1))
-
-  colors_to_use <- sapply(as.character(cst_df$CST), function(x) {
-    if (x %in% names(cst_colors)) cst_colors[x] else "gray50"
-  })
-
-  bp <- barplot(cst_df$count,
-                names.arg = cst_df$CST,
-                col = colors_to_use,
-                border = NA,
-                las = 2,
-                ylab = "Number of Samples",
-                main = "CST Distribution",
-                ylim = c(0, max(cst_df$count) * 1.2))
-
-  # Add count labels
-  text(bp, cst_df$count, labels = cst_df$count, pos = 3, cex = 0.8)
-
-  dev.off()
-  cat("[valencia] Generated CST distribution chart:", out_png, "\n")
-}
-
-# Generate SubCST distribution if available
-if (!is.na(subcst_col)) {
-  subcst_counts <- table(valencia_data[[subcst_col]])
-  subcst_df <- as.data.frame(subcst_counts)
-  colnames(subcst_df) <- c("SubCST", "count")
-  subcst_df <- subcst_df[order(-subcst_df$count), ]
-
-  out_png <- file.path(out_dir, "subcst_distribution.png")
-
-  png(out_png, width = 700, height = 500, res = 150, bg = "white")
-  par(mar = c(7, 4, 3, 1))
-
-  colors_to_use <- rainbow(nrow(subcst_df), s = 0.7, v = 0.8)
-
-  bp <- barplot(subcst_df$count,
-                names.arg = subcst_df$SubCST,
-                col = colors_to_use,
-                border = NA,
-                las = 2,
-                ylab = "Number of Samples",
-                main = "Sub-CST Distribution",
-                ylim = c(0, max(subcst_df$count) * 1.2),
-                cex.names = 0.7)
-
-  text(bp, subcst_df$count, labels = subcst_df$count, pos = 3, cex = 0.7)
-
-  dev.off()
-  cat("[valencia] Generated SubCST distribution chart:", out_png, "\n")
-}
-
-# Generate similarity score heatmap if multiple samples
-if (length(sim_cols) > 0 && nrow(valencia_data) > 0) {
-  # Prepare similarity matrix
-  sim_data <- valencia_data[, sim_cols, drop = FALSE]
-  rownames(sim_data) <- valencia_data[[sample_col]]
-
-  # Clean column names (remove _sim suffix)
-  colnames(sim_data) <- sub("_sim$", "", colnames(sim_data))
-
-  # Convert to matrix
-  sim_mat <- as.matrix(sim_data)
-
-  if (nrow(sim_mat) > 1) {
-    # Multiple samples - create heatmap
-    out_png <- file.path(out_dir, "similarity_heatmap.png")
-
-    n_samples <- nrow(sim_mat)
-    n_csts <- ncol(sim_mat)
-
-    png(out_png, width = max(500, n_csts * 50), height = max(400, n_samples * 30), res = 150, bg = "white")
-
-    layout(matrix(c(1, 2), nrow = 1), widths = c(4, 1))
-    par(mar = c(8, 10, 3, 1))
-
-    # Color palette
-    n_colors <- 100
-    colors <- colorRampPalette(c("white", "yellow", "orange", "red"))(n_colors)
-
-    image(1:n_csts, 1:n_samples, t(sim_mat),
-          col = colors,
-          xlab = "", ylab = "",
-          axes = FALSE,
-          main = "VALENCIA Similarity Scores")
-
-    axis(1, at = 1:n_csts, labels = colnames(sim_mat), las = 2, cex.axis = 0.7)
-    axis(2, at = 1:n_samples, labels = rownames(sim_mat), las = 1, cex.axis = 0.7)
-
-    # Colorbar
-    par(mar = c(8, 1, 3, 3))
-    image(1, seq(0, 1, length.out = n_colors), t(matrix(1:n_colors)),
-          col = colors,
-          xlab = "", ylab = "",
-          axes = FALSE)
-    axis(4, at = c(0, 0.5, 1), labels = c("0", "0.5", "1"), las = 1, cex.axis = 0.7)
-    mtext("Similarity", side = 4, line = 2, cex = 0.7)
-
-    dev.off()
-    cat("[valencia] Generated similarity heatmap:", out_png, "\n")
-  } else {
-    # Single sample - create bar chart of similarities
-    out_png <- file.path(out_dir, "similarity_scores.png")
-
-    png(out_png, width = 600, height = 400, res = 150, bg = "white")
-    par(mar = c(8, 4, 3, 1))
-
-    vals <- as.numeric(sim_mat[1, ])
-    names(vals) <- colnames(sim_mat)
-    vals <- sort(vals, decreasing = TRUE)
-
-    colors <- colorRampPalette(c("lightblue", "darkblue"))(length(vals))
-    colors <- colors[rank(-vals)]
-
-    bp <- barplot(vals,
-                  col = colors,
-                  border = NA,
-                  las = 2,
-                  ylab = "Similarity Score",
-                  main = paste("VALENCIA Similarity -", valencia_data[[sample_col]][1]),
-                  ylim = c(0, 1),
-                  cex.names = 0.8)
-
-    # Add value labels
-    text(bp, vals, labels = round(vals, 3), pos = 3, cex = 0.6)
-
-    dev.off()
-    cat("[valencia] Generated similarity scores chart:", out_png, "\n")
+# ---------------------------------------------------------------------------
+# VALENCIA plots: samples shown by the names entered in the GUI/CLI sample
+# sheet, in the order entered; CSTs in their standard order and colours.
+# ---------------------------------------------------------------------------
+valencia_ids <- as.character(valencia_data[[sample_col]])
+sample_display <- local({
+  out <- valencia_ids
+  sheet <- if (exists("read_sample_order_sheet", mode = "function")) read_sample_order_sheet(params) else NULL
+  if (!is.null(sheet)) {
+    nm <- setNames(trimws(sheet$sample_name), trimws(sheet$barcode))
+    bc <- sub("^.*_(barcode[0-9]+)$", "\\1", valencia_ids)
+    hit <- unname(nm[bc])
+    use <- !is.na(hit) & nzchar(hit)
+    out[use] <- hit[use]
   }
+  make.unique(out, sep = " ")
+})
+
+SUBCST_ORDER <- c("I-A", "I-B", "II", "III-A", "III-B", "IV-A", "IV-B",
+                  "IV-C0", "IV-C1", "IV-C2", "IV-C3", "IV-C4", "V")
+SUBCST_COLORS <- c("I-A" = "#08519C", "I-B" = "#6BAED6", "II" = "#FD8D3C",
+                   "III-A" = "#238B45", "III-B" = "#74C476", "IV-A" = "#CB181D",
+                   "IV-B" = "#6A51A3", "IV-C0" = "#8C510A", "IV-C1" = "#BF812D",
+                   "IV-C2" = "#DFC27D", "IV-C3" = "#C51B7D", "IV-C4" = "#F1B6DA",
+                   "V" = "#E6AB02")
+CST_ORDER <- c("I", "II", "III", "IV-A", "IV-B", "IV-C", "V")
+CST_COLORS <- c("I" = "#2171B5", "II" = "#FD8D3C", "III" = "#41AB5D", "IV-A" = "#CB181D",
+                "IV-B" = "#6A51A3", "IV-C" = "#A6611A", "V" = "#E6AB02")
+
+# Labels in a canonical order first, anything unexpected after
+canonical_levels <- function(values, canon) {
+  v <- unique(as.character(values[!is.na(values) & nzchar(values)]))
+  c(canon[canon %in% v], sort(setdiff(v, canon)))
+}
+pick_colors <- function(labels, palette) {
+  unname(ifelse(labels %in% names(palette), palette[labels], "gray60"))
+}
+# Left margin (in text lines) wide enough for the longest label
+label_margin <- function(labels, cex = 0.9) {
+  max(4, 1 + 0.55 * cex * max(nchar(as.character(labels)), 1))
 }
 
-# Generate score distribution if available
+n_val <- nrow(valencia_data)
+subcst_vals <- if (!is.na(subcst_col)) as.character(valencia_data[[subcst_col]]) else rep(NA_character_, n_val)
+cst_vals <- if (!is.na(cst_col)) as.character(valencia_data[[cst_col]]) else rep(NA_character_, n_val)
+score_vals <- if (!is.na(score_col)) suppressWarnings(as.numeric(valencia_data[[score_col]])) else rep(NA_real_, n_val)
+
+# 1. CST by sample: one bar per sample (VALENCIA score), coloured by sub-CST
+if (!is.na(subcst_col) && !is.na(score_col)) {
+  out_png <- file.path(out_dir, "cst_by_sample.png")
+  left <- label_margin(sample_display)
+  png(out_png, width = 1500, height = max(600, 260 + n_val * 70), res = 150, bg = "white")
+  par(mar = c(4.5, left, 3.5, 7), xpd = FALSE)
+  # barplot(horiz) draws the first bar at the bottom: reverse so input order reads top-down
+  ord <- rev(seq_len(n_val))
+  bar_cols <- pick_colors(subcst_vals[ord], SUBCST_COLORS)
+  bp <- barplot(score_vals[ord], horiz = TRUE, names.arg = sample_display[ord],
+                col = bar_cols, border = NA, las = 1, xlim = c(0, 1), cex.names = 0.9,
+                xlab = "VALENCIA score (similarity to the assigned sub-CST)",
+                main = "VALENCIA community state type by sample")
+  abline(v = c(0.25, 0.5, 0.75), col = "gray88", lty = 3)
+  par(xpd = TRUE)
+  lab <- ifelse(is.na(score_vals[ord]), subcst_vals[ord],
+                paste0(subcst_vals[ord], "  (", sprintf("%.2f", score_vals[ord]), ")"))
+  text(pmin(score_vals[ord], 1) + 0.01, bp, labels = lab, pos = 4, cex = 0.8, offset = 0.2)
+  dev.off()
+  cat("[valencia] Generated CST-by-sample chart:", out_png, "\n")
+}
+
+# 2/3. Number of samples in each CST / sub-CST (standard order, labels upright)
+count_chart <- function(values, canon, palette, out_png, title, xlab) {
+  found <- canonical_levels(values, canon)
+  if (length(found) == 0) return(invisible(FALSE))
+  # Every standard type is shown (empty ones at 0) so the result reads in context
+  lv <- c(canon, setdiff(found, canon))
+  counts <- as.integer(table(factor(values, levels = lv)))
+  png(out_png, width = max(1000, 250 + length(lv) * 105), height = 750, res = 150, bg = "white")
+  par(mar = c(4.5, 4.5, 3.5, 1))
+  bp <- barplot(counts, names.arg = lv, col = pick_colors(lv, palette), border = NA, las = 1,
+                ylim = c(0, max(counts) * 1.2), yaxt = "n", main = title,
+                xlab = xlab, ylab = "Number of samples")
+  axis(2, at = unique(round(pretty(c(0, max(counts))))), las = 1)
+  text(bp[counts > 0], counts[counts > 0], labels = counts[counts > 0], pos = 3, cex = 0.9)
+  dev.off()
+  invisible(TRUE)
+}
+if (!is.na(cst_col)) {
+  out_png <- file.path(out_dir, "cst_distribution.png")
+  if (count_chart(cst_vals, CST_ORDER, CST_COLORS, out_png, "Samples per CST", "CST"))
+    cat("[valencia] Generated CST distribution chart:", out_png, "\n")
+}
+if (!is.na(subcst_col)) {
+  out_png <- file.path(out_dir, "subcst_distribution.png")
+  if (count_chart(subcst_vals, SUBCST_ORDER, SUBCST_COLORS, out_png, "Samples per sub-CST", "Sub-CST"))
+    cat("[valencia] Generated SubCST distribution chart:", out_png, "\n")
+}
+
+# 4. Similarity of every sample to every sub-CST (values printed in the cells)
+if (length(sim_cols) > 0 && n_val > 0) {
+  sim_mat <- as.matrix(valencia_data[, sim_cols, drop = FALSE])
+  storage.mode(sim_mat) <- "numeric"
+  colnames(sim_mat) <- gsub(".", "-", sub("_sim$", "", colnames(sim_mat)), fixed = TRUE)
+  sim_mat <- sim_mat[, canonical_levels(colnames(sim_mat), SUBCST_ORDER), drop = FALSE]
+  rownames(sim_mat) <- sample_display
+  # image() draws row 1 at the bottom: reverse so input order reads top-down
+  sim_plot <- sim_mat[rev(seq_len(n_val)), , drop = FALSE]
+  n_cols <- ncol(sim_plot)
+
+  out_png <- file.path(out_dir, "similarity_heatmap.png")
+  left <- label_margin(sample_display)
+  png(out_png, width = 500 + left * 30 + n_cols * 95, height = max(650, 330 + n_val * 60),
+      res = 150, bg = "white")
+  layout(matrix(c(1, 2), nrow = 1), widths = c(8, 1))
+  par(mar = c(5, left, 4, 1))
+  heat_cols <- colorRampPalette(c("#FFFFFF", "#C6DBEF", "#4292C6", "#08306B"))(100)
+  image(seq_len(n_cols), seq_len(n_val), t(sim_plot), col = heat_cols, zlim = c(0, 1),
+        xlab = "Sub-CST", ylab = "", axes = FALSE,
+        main = "VALENCIA similarity to each sub-CST")
+  axis(1, at = seq_len(n_cols), labels = colnames(sim_plot), las = 1, cex.axis = 0.75, tick = FALSE)
+  axis(2, at = seq_len(n_val), labels = rownames(sim_plot), las = 1, cex.axis = 0.9, tick = FALSE)
+  abline(v = seq_len(n_cols + 1) - 0.5, h = seq_len(n_val + 1) - 0.5, col = "white", lwd = 1)
+  if (n_cols * n_val <= 600) {
+    cells <- expand.grid(x = seq_len(n_cols), y = seq_len(n_val))
+    v <- sim_plot[cbind(cells$y, cells$x)]
+    text(cells$x, cells$y, labels = sprintf("%.2f", v), cex = 0.6,
+         col = ifelse(v > 0.55, "white", "gray20"))
+  }
+  # Colour key
+  par(mar = c(5, 0.5, 4, 3.5))
+  image(1, seq(0, 1, length.out = 100), t(matrix(seq_len(100))), col = heat_cols,
+        axes = FALSE, xlab = "", ylab = "")
+  axis(4, at = c(0, 0.25, 0.5, 0.75, 1), las = 1, cex.axis = 0.75)
+  mtext("Similarity", side = 4, line = 2.4, cex = 0.75)
+  dev.off()
+  cat("[valencia] Generated similarity heatmap:", out_png, "\n")
+}
+
+# 5. Score histogram: only informative with enough samples (the CST-by-sample
+#    chart shows each sample's score)
 if (!is.na(score_col)) {
-  scores <- valencia_data[[score_col]]
-  scores <- scores[!is.na(scores)]
-
-  if (length(scores) > 0) {
+  scores <- score_vals[!is.na(score_vals)]
+  if (length(scores) >= 10) {
     out_png <- file.path(out_dir, "score_distribution.png")
-
-    png(out_png, width = 500, height = 400, res = 150, bg = "white")
-    par(mar = c(5, 4, 3, 1))
-
-    hist(scores,
-         breaks = 20,
-         col = "steelblue",
-         border = "white",
-         xlab = "VALENCIA Score",
-         ylab = "Frequency",
-         main = "VALENCIA Score Distribution",
-         xlim = c(0, 1))
-
-    # Add mean line
-    abline(v = mean(scores), col = "red", lwd = 2, lty = 2)
-    legend("topleft",
-           legend = paste("Mean:", round(mean(scores), 3)),
-           col = "red",
-           lty = 2,
-           lwd = 2,
-           bty = "n",
-           cex = 0.8)
-
+    png(out_png, width = 1000, height = 750, res = 150, bg = "white")
+    par(mar = c(4.5, 4.5, 3.5, 1))
+    hist(scores, breaks = seq(0, 1, by = 0.05), col = "#4292C6", border = "white",
+         xlab = "VALENCIA score", ylab = "Number of samples", las = 1,
+         main = "VALENCIA score distribution", xlim = c(0, 1))
+    abline(v = mean(scores), col = "#CB181D", lwd = 2, lty = 2)
+    legend("topleft", legend = paste("Mean:", round(mean(scores), 3)), col = "#CB181D",
+           lty = 2, lwd = 2, bty = "n", cex = 0.85)
     dev.off()
     cat("[valencia] Generated score distribution:", out_png, "\n")
+  } else {
+    cat("[valencia] Score distribution skipped (", length(scores),
+        " samples; each score is on the CST-by-sample chart)\n", sep = "")
   }
 }
 
 # Write summary CSV
 summary_df <- data.frame(
-  sample_id = valencia_data[[sample_col]],
+  sample_id = valencia_ids,
+  sample_name = sample_display,
   stringsAsFactors = FALSE
 )
 

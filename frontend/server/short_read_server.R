@@ -38,16 +38,27 @@ short_read_server <- function(id, shared) {
     # ── Site-specific Kraken2 defaults ───────────────────────────────────────────
     # Gut/skin: conf=0.03, MHG=4 | oral: conf=0.04, MHG=4 | vaginal: conf=0.02, MHG=2
     observeEvent(input$sample_type, {
-      defaults <- switch(input$sample_type,
-        vaginal = list(conf = 0.02, mhg = 2L),
-        gut     = list(conf = 0.03, mhg = 4L),
-        oral    = list(conf = 0.04, mhg = 4L),
-        skin    = list(conf = 0.03, mhg = 4L),
-        other   = list(conf = 0.05, mhg = 2L)
-      )
+      # Mixed runs use per-sample-type settings (site_db_rows) instead.
+      # SITE_KRAKEN_DEFAULTS / SITE_CHOICES / or_empty / normalize_barcode_id: long_read_server.R
+      defaults <- SITE_KRAKEN_DEFAULTS[[input$sample_type]]
+      if (is.null(defaults)) return()
       updateNumericInput(session, "kraken_confidence",     value = defaults$conf)
       updateNumericInput(session, "kraken_min_hit_groups", value = defaults$mhg)
     }, ignoreInit = FALSE)
+
+    is_mixed <- reactive({ identical(input$sample_type, "mixed") })
+
+    observeEvent(input$comparison_db_browse, {
+      path <- suppressWarnings(trimws(system("osascript -e 'POSIX path of (choose folder)'", intern = TRUE)))
+      if (length(path) > 0 && nchar(path) > 0) updateTextInput(session, "comparison_db", value = path)
+    })
+
+    lapply(unname(SITE_CHOICES), function(site) {
+      observeEvent(input[[paste0("site_db_browse_", site)]], {
+        path <- suppressWarnings(trimws(system("osascript -e 'POSIX path of (choose folder)'", intern = TRUE)))
+        if (length(path) > 0 && nchar(path) > 0) updateTextInput(session, paste0("site_db_", site), value = path)
+      })
+    })
 
     observeEvent(input$extra_output_dir_browse, {
       path <- suppressWarnings(trimws(system("osascript -e 'POSIX path of (choose folder)'", intern = TRUE)))
@@ -77,9 +88,10 @@ short_read_server <- function(id, shared) {
       if (cur > 0L) n_barcodes(cur - 1L)
     })
 
-    # Render dynamic barcode rows
+    # Render dynamic barcode rows (mixed runs add a per-sample type column)
     output$barcode_map_rows <- renderUI({
       n <- n_barcodes()
+      mixed <- is_mixed()
       if (n == 0L) return(NULL)
       tagList(lapply(seq_len(n), function(i) {
         bc_id <- sprintf("barcode%02d", i)
@@ -87,15 +99,111 @@ short_read_server <- function(id, shared) {
           class = "row mb-2 align-items-center",
           div(class = "col-md-3", tags$code(bc_id)),
           div(
-            class = "col-md-9",
+            class = if (mixed) "col-md-6" else "col-md-9",
             textInput(
               ns(paste0("bc_name_", i)), NULL,
               placeholder = "Sample name",
               value = isolate(input[[paste0("bc_name_", i)]] %||% "")
             )
+          ),
+          if (mixed) div(
+            class = "col-md-3",
+            selectInput(
+              ns(paste0("bc_site_", i)), NULL,
+              choices = c("Sample type..." = "", SITE_CHOICES),
+              selected = isolate(input[[paste0("bc_site_", i)]] %||% "")
+            )
           )
         )
       }))
+    })
+
+    # Collect sample_sites (barcode -> sample type) for mixed runs
+    get_sample_sites <- reactive({
+      if (!is_mixed()) return(NULL)
+      n <- n_barcodes()
+      if (n == 0L) return(NULL)
+      m <- list()
+      for (i in seq_len(n)) {
+        site <- input[[paste0("bc_site_", i)]] %||% ""
+        if (nchar(site) > 0) m[[sprintf("barcode%02d", i)]] <- site
+      }
+      if (length(m) == 0L) NULL else m
+    })
+
+    used_sites <- reactive({
+      sites <- unlist(or_empty(get_sample_sites()))
+      unname(SITE_CHOICES[SITE_CHOICES %in% sites])
+    })
+
+    # One Kraken2 DB + confidence + min-hit-groups block per sample type in use
+    output$site_db_rows <- renderUI({
+      sites <- used_sites()
+      if (length(sites) == 0) {
+        return(tags$small(class = "text-muted",
+          "Add barcodes below and choose each sample's type to set a database per type."))
+      }
+      tagList(lapply(sites, function(site) {
+        label <- names(SITE_CHOICES)[SITE_CHOICES == site]
+        d <- SITE_KRAKEN_DEFAULTS[[site]]
+        div(
+          class = "mb-3",
+          tags$label(class = "form-label", paste(label, "Kraken2 Database")),
+          div(
+            class = "file-browse-group",
+            div(
+              class = "drop-zone",
+              div(class = "drop-zone-header", icon("upload"), " Drag & drop"),
+              actionButton(ns(paste0("site_db_browse_", site)), "Browse",
+                class = "btn btn-outline-secondary"
+              )
+            ),
+            textInput(ns(paste0("site_db_", site)), NULL,
+              placeholder = sprintf("/path/to/%s/kraken2/db", site),
+              value = isolate(input[[paste0("site_db_", site)]] %||% ""),
+              width = "100%"
+            )
+          ),
+          div(
+            class = "row",
+            div(
+              class = "col-md-6",
+              tags$label(class = "form-label", "Confidence Threshold"),
+              numericInput(ns(paste0("site_conf_", site)), NULL,
+                value = isolate(input[[paste0("site_conf_", site)]]) %||% d$conf,
+                min = 0, max = 1, step = 0.01)
+            ),
+            div(
+              class = "col-md-6",
+              tags$label(class = "form-label", "Minimum Hit Groups"),
+              numericInput(ns(paste0("site_mhg_", site)), NULL,
+                value = isolate(input[[paste0("site_mhg_", site)]]) %||% d$mhg,
+                min = 1, max = 100, step = 1)
+            )
+          )
+        )
+      }))
+    })
+
+    get_site_dbs <- reactive({
+      m <- list()
+      for (site in used_sites()) {
+        p <- trimws(input[[paste0("site_db_", site)]] %||% "")
+        if (nchar(p) > 0) m[[site]] <- p
+      }
+      if (length(m) == 0L) NULL else m
+    })
+
+    get_site_params <- reactive({
+      m <- list()
+      for (site in used_sites()) {
+        d <- SITE_KRAKEN_DEFAULTS[[site]]
+        m[[site]] <- list(
+          confidence         = as.numeric(input[[paste0("site_conf_", site)]] %||% d$conf),
+          minimum_hit_groups = as.integer(input[[paste0("site_mhg_", site)]] %||% d$mhg)
+        )
+      }
+      if (length(m) == 0L) NULL else m
     })
 
     # --- Multi-sample batch state (independent samples, each with own R1/R2) ---
@@ -300,7 +408,7 @@ short_read_server <- function(id, shared) {
     })
 
     validate_inputs <- reactive({
-      errors <- character(0)
+      errors <- final_dir_errors(input$extra_output_dir)
 
       if (input$paired_end) {
         if (nchar(input$input_r1) == 0) errors <- c(errors, "Forward reads (R1) path is required")
@@ -336,7 +444,28 @@ short_read_server <- function(id, shared) {
         }
       }
 
-      if (input$pipeline == "sr_meta" && nchar(input$kraken_db) == 0) {
+      if (is_mixed()) {
+        n <- n_barcodes()
+        if (n == 0L) {
+          errors <- c(errors, "Mixed sample types: add the barcodes in this run under Sample Barcode Mapping")
+        } else {
+          unset <- which(vapply(seq_len(n), function(i) nchar(input[[paste0("bc_site_", i)]] %||% "") == 0, logical(1)))
+          if (length(unset) > 0) {
+            errors <- c(errors, sprintf("Choose a sample type for barcode row(s): %s", paste(unset, collapse = ", ")))
+          }
+        }
+        if (input$pipeline == "sr_meta") {
+          site_dbs <- or_empty(get_site_dbs())
+          missing <- setdiff(used_sites(), names(site_dbs))
+          if (length(missing) > 0 && nchar(input$kraken_db) == 0) {
+            labels <- names(SITE_CHOICES)[match(missing, SITE_CHOICES)]
+            errors <- c(errors, sprintf("Kraken2 database required for: %s (or set the Kraken2 Database Path as a fallback)",
+                                        paste(labels, collapse = ", ")))
+          }
+          errors <- c(errors, mixed_db_errors(site_dbs, trimws(input$comparison_db %||% ""),
+                                              trimws(input$kraken_db %||% "")))
+        }
+      } else if (input$pipeline == "sr_meta" && nchar(input$kraken_db) == 0) {
         errors <- c(errors, "Kraken2 database path is required for metagenomics")
       }
 
@@ -349,13 +478,21 @@ short_read_server <- function(id, shared) {
         }
       }
 
-      list(valid = length(errors) == 0, errors = errors)
+      warnings <- character(0)
+      if (input$pipeline == "sr_meta") {
+        warnings <- kraken_db_slow_warnings(kraken_db_paths(
+          input$kraken_db,
+          if (is_mixed()) or_empty(get_site_dbs()) else list(),
+          if (is_mixed()) input$comparison_db else ""))
+      }
+
+      list(valid = length(errors) == 0, errors = errors, warnings = warnings)
     })
 
     output$validation_messages <- renderUI({
       val <- validate_inputs()
 
-      if (val$valid) {
+      status <- if (val$valid) {
         div(
           class = "alert alert-success",
           role = "alert",
@@ -374,6 +511,7 @@ short_read_server <- function(id, shared) {
           )
         )
       }
+      tagList(status, slow_db_alert(val$warnings))
     })
 
     build_command <- reactive({
@@ -407,6 +545,12 @@ short_read_server <- function(id, shared) {
       } else if (input$pipeline == "sr_meta") {
         if (nchar(input$kraken_db) > 0) {
           cmd <- c(cmd, "--db", input$kraken_db)
+        }
+        if (is_mixed()) {
+          site_dbs <- or_empty(get_site_dbs())
+          for (site in names(site_dbs)) cmd <- c(cmd, "--site-db", paste0(site, "=", site_dbs[[site]]))
+          cmp <- trimws(input$comparison_db %||% "")
+          if (nchar(cmp) > 0) cmd <- c(cmd, "--comparison-db", cmp)
         }
         if (input$human_depletion) {
           cmd <- c(cmd, "--human-depletion")
@@ -450,6 +594,11 @@ short_read_server <- function(id, shared) {
       }
 
       cat("[DEBUG] Validation passed\n")
+
+      if (length(val$warnings) > 0) {
+        showNotification(paste(val$warnings, collapse = " "),
+                         type = "warning", duration = 20)
+      }
 
       # Capture this module's own output-dir field fresh, right as the run starts.
       # shared$additional_output_dir is a single global value also written to by the
@@ -512,7 +661,11 @@ short_read_server <- function(id, shared) {
         enable_postprocess = any(c(isTRUE(input$output_raw_csv), isTRUE(input$output_pie_chart),
                                    isTRUE(input$output_heatmap), isTRUE(input$output_stacked_bar),
                                    isTRUE(input$output_quality_reports))),
-        sample_map        = get_sample_map()
+        sample_map        = get_sample_map(),
+        sample_sites      = get_sample_sites(),
+        site_dbs          = if (is_mixed() && input$pipeline == "sr_meta") get_site_dbs() else NULL,
+        site_params       = if (is_mixed() && input$pipeline == "sr_meta") get_site_params() else NULL,
+        comparison_db     = if (is_mixed() && input$pipeline == "sr_meta") trimws(input$comparison_db %||% "") else ""
       )
 
       generate_fn <- if (input$pipeline == "sr_amp") generate_sr_amp_config else generate_sr_meta_config
@@ -563,6 +716,10 @@ short_read_server <- function(id, shared) {
         if (length(dep_validation$warnings) > 0) {
           showNotification(paste(dep_validation$warnings, collapse = "\n"), type = "warning", duration = 10)
         }
+
+        # The pipeline moves the finished run here (outputs/ keeps a link to it)
+        final_dir <- resolve_final_dir(input$extra_output_dir)
+        if (nzchar(final_dir)) config$run$final_dir <- final_dir
 
         config_file <- save_config(config, run_id)
 
@@ -630,6 +787,10 @@ short_read_server <- function(id, shared) {
         # Filename disambiguator only (config$run$run_id stays the plain sample id) —
         # avoids collisions between same-named samples across different batches, since
         # save_config() writes into a flat outputs/config_<id>.json namespace.
+        # The pipeline moves the finished run here (outputs/ keeps a link to it)
+        final_dir <- resolve_final_dir(input$extra_output_dir)
+        if (nzchar(final_dir)) config$run$final_dir <- final_dir
+
         config_file <- save_config(config, paste0(batch_id, "__", sample_run_id))
 
         batch_runs[[i]] <- list(

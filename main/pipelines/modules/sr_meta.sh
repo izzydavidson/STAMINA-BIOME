@@ -25,6 +25,10 @@ TOOLS_SH="${PIPELINES_DIR}/tools.sh"
 if [[ ! -f "${TOOLS_SH}" ]]; then echo "ERROR: Missing shared tools file: ${TOOLS_SH}" >&2; exit 2; fi
 # shellcheck disable=SC1090
 source "${TOOLS_SH}"
+SITE_ROUTING_SH="${PIPELINES_DIR}/site_routing.sh"
+if [[ ! -f "${SITE_ROUTING_SH}" ]]; then echo "ERROR: Missing shared site routing file: ${SITE_ROUTING_SH}" >&2; exit 2; fi
+# shellcheck disable=SC1090
+source "${SITE_ROUTING_SH}"
 
 jq_first() {
   local file="$1"; shift
@@ -739,6 +743,11 @@ else
     MINIMAP2_EXTRA_ARGS+=( -I "${MINIMAP2_SPLIT_SIZE}" )
     echo "[host_depletion] Using minimap2 split-index mode: -I ${MINIMAP2_SPLIT_SIZE}" >>"${HOSTDEP_LOG}" 2>&1
   fi
+  # A multi-part prebuilt index needs --split-prefix, or the SAM has no @SQ lines
+  if [[ -z "${MINIMAP2_SPLIT_SIZE}" ]] && minimap2_index_is_multipart "${MINIMAP2_BIN}" "${HUMAN_MMI}"; then
+    MINIMAP2_EXTRA_ARGS+=( --split-prefix "${HOSTDEP_DIR}/mm2_split" )
+    echo "[host_depletion] Human index is multi-part: using minimap2 --split-prefix" >>"${HOSTDEP_LOG}" 2>&1
+  fi
 
   started="$(iso_now)"
   set +e
@@ -822,11 +831,36 @@ if [[ -z "${KRAKEN2_BIN}" ]]; then
   echo "ERROR: kraken2 not found. Install kraken2 or set tools.kraken2_bin." >&2
   exit 2
 fi
-[[ -n "${KRAKEN2_DB}" ]] || { echo "ERROR: Missing kraken2 DB path. Set tools.kraken2.db (or tools.kraken2.db_classify)." >&2; exit 2; }
-if [[ ! -d "${KRAKEN2_DB}" ]]; then
-  echo "ERROR: Kraken2 DB directory not found: ${KRAKEN2_DB}" >&2
+# Per-sample sites + per-site DBs (mixed-site runs); see site_routing.sh
+SR_SAMPLE_SHEET="$(jq_first "${CONFIG_PATH}" '.inputs.sample_sheet' '.input.sample_sheet' '.sample_sheet' || true)"
+site_routing_load "${CONFIG_PATH}" "${SR_SAMPLE_SHEET}"
+SPECIMEN_NORM="$(site_normalize_name "${SPECIMEN_NORM}")"
+[[ -n "${SPECIMEN_NORM}" ]] || SPECIMEN_NORM="other"
+[[ "${KRAKEN2_DB}" == "null" ]] && KRAKEN2_DB=""
+
+if [[ ${#DB_BY_SITE[@]} -eq 0 ]]; then
+  [[ -n "${KRAKEN2_DB}" ]] || { echo "ERROR: Missing kraken2 DB path. Set tools.kraken2.db (or tools.kraken2.db_classify)." >&2; exit 2; }
+  if [[ ! -d "${KRAKEN2_DB}" ]]; then
+    echo "ERROR: Kraken2 DB directory not found: ${KRAKEN2_DB}" >&2
+    exit 2
+  fi
+fi
+SR_DB_MISSING=()
+for u in "${UNITS[@]}"; do
+  _site="$(site_for_sample "${u}" "${SPECIMEN_NORM}")"
+  _db="$(site_db_for "${_site}" "${KRAKEN2_DB}")"
+  if [[ -z "${_db}" || ! -d "${_db}" ]]; then
+    SR_DB_MISSING+=( "${u} (site=${_site}, db=${_db:-<none>})" )
+  fi
+done
+if [[ ${#SR_DB_MISSING[@]} -gt 0 ]]; then
+  echo "ERROR: No usable Kraken2 database for ${#SR_DB_MISSING[@]} sample(s):" >&2
+  printf '  - %s\n' "${SR_DB_MISSING[@]}" >&2
+  echo "       Set tools.kraken2.db_by_site.<site> (or tools.kraken2.db as a fallback) for every site in the run." >&2
   exit 2
 fi
+SAMPLE_SITES_TSV="${RESULTS_DIR}/sample_sites.tsv"
+site_write_samples_tsv "${SAMPLE_SITES_TSV}" "${SPECIMEN_NORM}" "${UNITS[@]}"
 
 # Read memory_mapping option for low-RAM systems (uses disk I/O instead of loading DB into RAM)
 KRAKEN2_MEMORY_MAPPING_RAW="$(jq_first "${CONFIG_PATH}" '.params.kraken2.memory_mapping' '.kraken2.memory_mapping' || true)"
@@ -881,7 +915,12 @@ if [[ "${USE_BRACKEN}" == "1" || "${USE_BRACKEN}" == "true" ]]; then
     echo "[bracken] bracken binary not found (${BRACKEN_BIN}) — Bracken will be skipped" >>"${BRACKEN_LOG}" 2>&1
   else
     KRAKEN_KMER_DISTRIB="${KRAKEN2_DB}/database${BRACKEN_READLEN}mers.kmer_distrib"
-    if [[ ! -s "${KRAKEN_KMER_DISTRIB}" ]]; then
+    if [[ ${#DB_BY_SITE[@]} -gt 0 ]]; then
+      # Per-site DBs: kmer_distrib is checked per sample against that sample's DB
+      BRACKEN_AVAILABLE="1"
+      DO_BRACKEN="1"
+      mkdir -p "${BRACKEN_DIR}"
+    elif [[ ! -s "${KRAKEN_KMER_DISTRIB}" ]]; then
       echo "[bracken] kmer_distrib missing for readlen=${BRACKEN_READLEN}: ${KRAKEN_KMER_DISTRIB} — Bracken will be skipped" >>"${BRACKEN_LOG}" 2>&1
     else
       BRACKEN_AVAILABLE="1"
@@ -913,24 +952,48 @@ declare -A BRACKEN_REPORT=()
 started="$(iso_now)"
 set +e
 for u in "${UNITS[@]}"; do
-  echo "[kraken2] unit=${u}" >>"${KRAKEN_LOG}" 2>&1
+  # Per-sample site routing: DB / confidence / min-hit-groups / Bracken readlen
+  u_site="$(site_for_sample "${u}" "${SPECIMEN_NORM}")"
+  u_db="$(site_db_for "${u_site}" "${KRAKEN2_DB}")"
+  if [[ "${u_site}" == "vaginal" ]]; then
+    u_conf="${KRAKEN_CONF_VAGINAL}"; u_mhg="${KRAKEN_MHG_VAGINAL}"; u_br_pref="${BRACKEN_READLEN_VAGINAL}"; u_use_br="${USE_BRACKEN_VAGINAL}"
+  else
+    u_conf="${KRAKEN_CONF_NONVAGINAL}"; u_mhg="${KRAKEN_MHG_NONVAGINAL}"; u_br_pref="${BRACKEN_READLEN_NONVAGINAL}"; u_use_br="${USE_BRACKEN_NONVAGINAL}"
+  fi
+  if [[ ${SITE_ROUTING_ACTIVE} -eq 0 && ${#DB_BY_SITE[@]} -eq 0 ]]; then
+    # Single-site run: unchanged behaviour (specimen-wide settings)
+    u_conf="${KRAKEN_CONF}"; u_mhg="${KRAKEN_MHG}"; u_br_readlen="${BRACKEN_READLEN}"; u_do_br="${DO_BRACKEN}"
+  else
+    [[ -n "${CONF_BY_SITE[${u_site}]:-}" ]] && u_conf="${CONF_BY_SITE[${u_site}]}"
+    [[ -n "${MHG_BY_SITE[${u_site}]:-}" ]] && u_mhg="${MHG_BY_SITE[${u_site}]}"
+    u_do_br="0"; u_br_readlen=""
+    if [[ "${BRACKEN_AVAILABLE}" == "1" && ( "${u_use_br}" == "1" || "${u_use_br}" == "true" ) ]]; then
+      u_br_readlen="$(site_pick_bracken_readlen "${u_db}" "${BRACKEN_READLEN_BY_SITE[${u_site}]:-${u_br_pref}}")"
+      if [[ -n "${u_br_readlen}" ]]; then
+        u_do_br="1"; mkdir -p "${BRACKEN_DIR}"
+      else
+        echo "[bracken] unit=${u} no kmer_distrib in ${u_db} — Bracken skipped for this unit" >>"${BRACKEN_LOG}" 2>&1
+      fi
+    fi
+  fi
+  echo "[kraken2] unit=${u} site=${u_site} db=${u_db} --confidence ${u_conf} --minimum-hit-groups ${u_mhg}" >>"${KRAKEN_LOG}" 2>&1
   report="${KRAKEN_DIR}/${u}.report.tsv"
   out="${KRAKEN_DIR}/${u}.kraken.tsv"
 
   if [[ "${INPUT_STYLE}" == "FASTQ_PAIRED" ]]; then
     r1="${NONHOST_R1[${u}]}"
     r2="${NONHOST_R2[${u}]}"
-    "${KRAKEN2_BIN}" --db "${KRAKEN2_DB}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --paired --gzip-compressed \
-      --confidence "${KRAKEN_CONF}" \
-      --minimum-hit-groups "${KRAKEN_MHG}" \
+    "${KRAKEN2_BIN}" --db "${u_db}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --paired --gzip-compressed \
+      --confidence "${u_conf}" \
+      --minimum-hit-groups "${u_mhg}" \
       --report "${report}" \
       --output "${out}" \
       "${r1}" "${r2}" >>"${KRAKEN_LOG}" 2>&1
   else
     r1="${NONHOST_R1[${u}]}"
-    "${KRAKEN2_BIN}" --db "${KRAKEN2_DB}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --gzip-compressed \
-      --confidence "${KRAKEN_CONF}" \
-      --minimum-hit-groups "${KRAKEN_MHG}" \
+    "${KRAKEN2_BIN}" --db "${u_db}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --gzip-compressed \
+      --confidence "${u_conf}" \
+      --minimum-hit-groups "${u_mhg}" \
       --report "${report}" \
       --output "${out}" \
       "${r1}" >>"${KRAKEN_LOG}" 2>&1
@@ -947,16 +1010,16 @@ for u in "${UNITS[@]}"; do
   KRAKEN_REPORT["${u}"]="${report}"
   KRAKEN_OUTPUT["${u}"]="${out}"
 
-  if [[ "${DO_BRACKEN}" -eq 1 ]]; then
-    echo "[bracken] unit=${u} readlen=${BRACKEN_READLEN}" >>"${BRACKEN_LOG}" 2>&1
+  if [[ "${u_do_br}" -eq 1 ]]; then
+    echo "[bracken] unit=${u} readlen=${u_br_readlen}" >>"${BRACKEN_LOG}" 2>&1
     bout="${BRACKEN_DIR}/${u}.bracken"
     breport="${BRACKEN_DIR}/${u}.breport"
     "${BRACKEN_BIN}" \
-      -d "${KRAKEN2_DB}" \
+      -d "${u_db}" \
       -i "${report}" \
       -o "${bout}" \
       -w "${breport}" \
-      -r "${BRACKEN_READLEN}" \
+      -r "${u_br_readlen}" \
       -l S >>"${BRACKEN_LOG}" 2>&1
     if [[ $? -eq 0 && -s "${breport}" ]]; then
       BRACKEN_OUTPUT["${u}"]="${bout}"
@@ -968,9 +1031,14 @@ for u in "${UNITS[@]}"; do
 done
 set -e
 ended="$(iso_now)"
-steps_append "${STEPS_JSON}" "kraken2" "succeeded" "kraken2 classification completed (confidence=${KRAKEN_CONF}, minimum-hit-groups=${KRAKEN_MHG})" "${KRAKEN2_BIN}" "kraken2" "0" "${started}" "${ended}"
+if [[ ${SITE_ROUTING_ACTIVE} -eq 1 || ${#DB_BY_SITE[@]} -gt 0 ]]; then
+  KRAKEN_STEP_MSG="kraken2 classification completed (per-sample DB/confidence/minimum-hit-groups by sample type; see logs/kraken2.log)"
+else
+  KRAKEN_STEP_MSG="kraken2 classification completed (confidence=${KRAKEN_CONF}, minimum-hit-groups=${KRAKEN_MHG})"
+fi
+steps_append "${STEPS_JSON}" "kraken2" "succeeded" "${KRAKEN_STEP_MSG}" "${KRAKEN2_BIN}" "kraken2" "0" "${started}" "${ended}"
 if [[ "${DO_BRACKEN}" -eq 1 ]]; then
-  steps_append "${STEPS_JSON}" "bracken" "succeeded" "bracken re-estimation completed (readlen=${BRACKEN_READLEN})" "${BRACKEN_BIN}" "bracken" "0" "${started}" "${ended}"
+  steps_append "${STEPS_JSON}" "bracken" "succeeded" "bracken re-estimation completed ($( [[ ${SITE_ROUTING_ACTIVE} -eq 1 || ${#DB_BY_SITE[@]} -gt 0 ]] && echo "readlen per sample type; see logs/bracken.log" || echo "readlen=${BRACKEN_READLEN}" ))" "${BRACKEN_BIN}" "bracken" "0" "${started}" "${ended}"
 else
   steps_append "${STEPS_JSON}" "bracken" "skipped" "Bracken disabled or unavailable (see logs/bracken.log)" "" "" "0" "${started}" "${ended}"
 fi
@@ -979,6 +1047,66 @@ tmp="${OUTPUTS_JSON}.tmp"
 jq --arg kraken2_dir "${KRAKEN_DIR}" --arg kraken2_log "${KRAKEN_LOG}" \
    --arg bracken_dir "${BRACKEN_DIR}" --arg bracken_log "${BRACKEN_LOG}" --arg bracken_enabled "${DO_BRACKEN}" \
    '. + {kraken2:{dir:$kraken2_dir, log:$kraken2_log}, bracken:{enabled:($bracken_enabled=="1"), dir:$bracken_dir, log:$bracken_log}}' "${OUTPUTS_JSON}" > "${tmp}"
+mv "${tmp}" "${OUTPUTS_JSON}"
+
+# -----------------------------
+# Comparison DB (optional): every sample against ONE shared DB with one parameter
+# set. Site-specific DBs give the best within-site results, but between-site
+# differences are then confounded with database differences; use these outputs
+# for between-site comparisons.
+# -----------------------------
+COMPARISON_KRAKEN_DIR="${RESULTS_DIR}/kraken2_comparison_db"
+if [[ -n "${COMPARISON_DB}" ]]; then
+  started="$(iso_now)"
+  COMP_EC=0
+  if [[ ! -d "${COMPARISON_DB}" ]]; then
+    echo "[kraken2-comparison] DB not found: ${COMPARISON_DB}" >>"${KRAKEN_LOG}" 2>&1
+    COMP_EC=2
+  else
+    mkdir -p "${COMPARISON_KRAKEN_DIR}"
+    COMP_BR_READLEN=""
+    if command -v "${BRACKEN_BIN}" >/dev/null 2>&1; then
+      COMP_BR_READLEN="$(site_pick_bracken_readlen "${COMPARISON_DB}" "${BRACKEN_READLEN_NONVAGINAL}")"
+    fi
+    set +e
+    for u in "${UNITS[@]}"; do
+      creport="${COMPARISON_KRAKEN_DIR}/${u}.report.tsv"
+      cout="${COMPARISON_KRAKEN_DIR}/${u}.kraken.tsv"
+      echo "[kraken2-comparison] unit=${u} --confidence ${COMPARISON_CONF} --minimum-hit-groups ${COMPARISON_MHG}" >>"${KRAKEN_LOG}" 2>&1
+      if [[ "${INPUT_STYLE}" == "FASTQ_PAIRED" ]]; then
+        "${KRAKEN2_BIN}" --db "${COMPARISON_DB}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --paired --gzip-compressed \
+          --confidence "${COMPARISON_CONF}" --minimum-hit-groups "${COMPARISON_MHG}" \
+          --report "${creport}" --output "${cout}" "${NONHOST_R1[${u}]}" "${NONHOST_R2[${u}]}" >>"${KRAKEN_LOG}" 2>&1
+      else
+        "${KRAKEN2_BIN}" --db "${COMPARISON_DB}" "${KRAKEN2_EXTRA_ARGS[@]}" --threads "${THREADS}" --gzip-compressed \
+          --confidence "${COMPARISON_CONF}" --minimum-hit-groups "${COMPARISON_MHG}" \
+          --report "${creport}" --output "${cout}" "${NONHOST_R1[${u}]}" >>"${KRAKEN_LOG}" 2>&1
+      fi
+      ec=$?
+      if [[ $ec -ne 0 ]]; then COMP_EC=$ec; break; fi
+      if [[ -n "${COMP_BR_READLEN}" ]]; then
+        "${BRACKEN_BIN}" -d "${COMPARISON_DB}" -i "${creport}" -o "${COMPARISON_KRAKEN_DIR}/${u}.bracken" \
+          -w "${COMPARISON_KRAKEN_DIR}/${u}.breport" -r "${COMP_BR_READLEN}" -l S >>"${BRACKEN_LOG}" 2>&1 \
+          || echo "[bracken-comparison] unit=${u} failed — using raw kreport" >>"${BRACKEN_LOG}" 2>&1
+      fi
+    done
+    set -e
+  fi
+  ended="$(iso_now)"
+  if [[ ${COMP_EC} -eq 0 ]]; then
+    steps_append "${STEPS_JSON}" "kraken2_comparison_db" "succeeded" "kraken2 against comparison DB completed (${COMPARISON_DB})" "${KRAKEN2_BIN}" "kraken2" "0" "${started}" "${ended}"
+  else
+    steps_append "${STEPS_JSON}" "kraken2_comparison_db" "failed" "kraken2 against comparison DB failed (non-fatal; site-DB results unaffected)" "${KRAKEN2_BIN}" "kraken2" "${COMP_EC}" "${started}" "${ended}"
+  fi
+  tmp="${OUTPUTS_JSON}.tmp"
+  jq --arg d "${COMPARISON_KRAKEN_DIR}" --arg db "${COMPARISON_DB}" '. + {comparison_db:{db:$db, results_dir:$d}}' "${OUTPUTS_JSON}" > "${tmp}"
+  mv "${tmp}" "${OUTPUTS_JSON}"
+else
+  started="$(iso_now)"; ended="$(iso_now)"
+  steps_append "${STEPS_JSON}" "kraken2_comparison_db" "skipped" "No comparison database configured (tools.kraken2.comparison_db)" "" "" "0" "${started}" "${ended}"
+fi
+tmp="${OUTPUTS_JSON}.tmp"
+jq --arg p "${SAMPLE_SITES_TSV}" '. + {sample_sites_tsv:$p}' "${OUTPUTS_JSON}" > "${tmp}"
 mv "${tmp}" "${OUTPUTS_JSON}"
 
 # -----------------------------
@@ -1008,6 +1136,22 @@ if [[ "${VALENCIA_ENABLED_NORM}" == "true" ]]; then
 elif [[ "${VALENCIA_ENABLED_NORM}" == "auto" || "${VALENCIA_MODE_NORM}" == "auto" ]]; then
   if [[ "${SPECIMEN_NORM}" == "vaginal" ]]; then
     VALENCIA_SHOULD_RUN="yes"
+  fi
+fi
+
+# Mixed-site runs: restrict VALENCIA to the vaginal samples (skip if there are none)
+export STAMINA_VALENCIA_SAMPLES=""
+if [[ ${SITE_ROUTING_ACTIVE} -eq 1 && "${VALENCIA_ENABLED_NORM}" != "false" ]]; then
+  VAG_UNITS=()
+  for u in "${UNITS[@]}"; do
+    [[ "$(site_for_sample "${u}" "${SPECIMEN_NORM}")" == "vaginal" ]] && VAG_UNITS+=( "${u}" )
+  done
+  if [[ ${#VAG_UNITS[@]} -gt 0 ]]; then
+    VALENCIA_SHOULD_RUN="yes"
+    STAMINA_VALENCIA_SAMPLES="$(IFS=,; echo "${VAG_UNITS[*]}")"
+    log_info "VALENCIA restricted to vaginal samples: ${STAMINA_VALENCIA_SAMPLES}"
+  else
+    VALENCIA_SHOULD_RUN="no"
   fi
 fi
 
@@ -1098,6 +1242,11 @@ def parse_kreport(path: str):
 kraken_path = Path(kraken_dir)
 bracken_path = Path(bracken_dir) if bracken_dir else None
 kreport_files = list(kraken_path.glob("*.report.tsv"))
+# Mixed-site runs pass the vaginal sample IDs; VALENCIA is only meaningful for those
+_valencia_only = [x for x in os.environ.get("STAMINA_VALENCIA_SAMPLES", "").split(",") if x]
+if _valencia_only:
+    kreport_files = [k for k in kreport_files if k.name[:-len(".report.tsv")] in _valencia_only]
+    print(f"Restricting VALENCIA to vaginal samples: {', '.join(_valencia_only)}")
 
 if not kreport_files:
     print(f"WARNING: No kreport files found in {kraken_dir}")
@@ -1428,6 +1577,9 @@ mkdir -p "${POSTPROCESS_DIR}" "${FINAL_DIR}" "${FINAL_DIR}/plots" "${FINAL_DIR}/
 started="$(iso_now)"
 set +e
 
+STAMINA_SAMPLE_SITES_TSV="${SAMPLE_SITES_TSV}" \
+STAMINA_SITE_ROUTING_ACTIVE="${SITE_ROUTING_ACTIVE}" \
+STAMINA_COMPARISON_DIR="$( [[ -n "${COMPARISON_DB}" && -d "${COMPARISON_KRAKEN_DIR}" ]] && echo "${COMPARISON_KRAKEN_DIR}" )" \
 python3 - "${KRAKEN_DIR}" "${POSTPROCESS_DIR}" "${FINAL_DIR}" "${VALENCIA_DIR}" "${POSTPROCESS_LOG}" "${SAMPLE_ID}" "${BRACKEN_DIR}" <<'PY'
 import os
 import sys
@@ -1489,7 +1641,11 @@ def parse_kreport(path):
     return rows_by_rank, total_reads
 
 # Find all kraken reports
-reports = list(kraken_dir.glob("*.report.tsv"))
+import re as _re
+def _natural_key(name):
+    # barcode2 before barcode10; samples listed in a stable, readable order
+    return [int(t) if t.isdigit() else t.lower() for t in _re.split(r"(\d+)", name)]
+reports = sorted(kraken_dir.glob("*.report.tsv"), key=lambda p: _natural_key(p.name))
 if not reports:
     log("[postprocess] No kraken2 reports found, skipping summarization")
     sys.exit(0)
@@ -1532,13 +1688,57 @@ for report_path in reports:
             "fraction": frac
         })
 
+# Per-sample sites (mixed-site runs add a `site` column to the tidy tables)
+import os
+sample_sites = {}
+sites_tsv = Path(os.environ.get("STAMINA_SAMPLE_SITES_TSV", "") or "/nonexistent")
+if sites_tsv.is_file():
+    with open(sites_tsv, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            if row.get("sample_id"):
+                sample_sites[row["sample_id"]] = row.get("site") or ""
+site_routing_active = os.environ.get("STAMINA_SITE_ROUTING_ACTIVE", "0") == "1" and bool(sample_sites)
+if site_routing_active:
+    for r in all_species + all_genus:
+        r["site"] = sample_sites.get(r["sample_id"], "")
+    log(f"[postprocess] Mixed-site run: added site column ({len(set(sample_sites.values()))} sites)")
+
 # Write tidy CSVs
-def write_tidy_csv(path, rows, taxon_col):
+def write_tidy_csv(path, rows, taxon_col, with_site=None):
+    if with_site is None:
+        with_site = site_routing_active
+    fields = ["sample_id", "taxid", taxon_col, "reads", "fraction"] + (["site"] if with_site else [])
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["sample_id", "taxid", taxon_col, "reads", "fraction"])
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             w.writerow(r)
+
+# Comparison DB tables (every sample against one shared DB)
+comparison_dir = os.environ.get("STAMINA_COMPARISON_DIR", "")
+comp_species, comp_genus, comp_reports = [], [], []
+if comparison_dir and Path(comparison_dir).is_dir():
+    comp_reports = sorted(Path(comparison_dir).glob("*.report.tsv"))
+    for report_path in comp_reports:
+        unit = report_path.name[:-len(".report.tsv")]
+        src = report_path
+        b = report_path.parent / f"{unit}.breport"
+        if b.exists() and b.stat().st_size > 0:
+            src = b
+        rows_by_rank, total_reads = parse_kreport(src)
+        for rank, bucket, col in (("S", comp_species, "species"), ("G", comp_genus, "genus")):
+            for row in rows_by_rank.get(rank, []):
+                bucket.append({
+                    "sample_id": unit, "taxid": row["taxid"], col: row["name"],
+                    "reads": row["clade_reads"],
+                    "fraction": row["clade_reads"] / total_reads if total_reads > 0 else 0,
+                    "site": sample_sites.get(unit, ""),
+                })
+    for rows, col, name in ((comp_species, "species", "comparison_db_species_tidy.csv"),
+                            (comp_genus, "genus", "comparison_db_genus_tidy.csv")):
+        if rows:
+            write_tidy_csv(postprocess_dir / name, rows, col, with_site=True)
+            log(f"[postprocess] Wrote comparison DB table: {name}")
 
 species_tidy = postprocess_dir / "kraken_species_tidy.csv"
 genus_tidy = postprocess_dir / "kraken_genus_tidy.csv"
@@ -1685,6 +1885,21 @@ except Exception as e:
 
 # Copy key outputs to final directory
 import shutil
+
+# Per-sample site table + comparison DB outputs
+if sites_tsv.is_file():
+    shutil.copy2(sites_tsv, final_dir / "tables" / "sample_sites.tsv")
+if comp_reports:
+    comp_final = final_dir / "tables" / "comparison_db"
+    comp_final.mkdir(parents=True, exist_ok=True)
+    for r in comp_reports:
+        shutil.copy2(r, comp_final / r.name)
+        b = r.parent / (r.name[:-len(".report.tsv")] + ".breport")
+        if b.exists() and b.stat().st_size > 0:
+            shutil.copy2(b, comp_final / b.name)
+    for name in ("comparison_db_species_tidy.csv", "comparison_db_genus_tidy.csv"):
+        if (postprocess_dir / name).exists():
+            shutil.copy2(postprocess_dir / name, final_dir / "tables" / name)
 
 # Copy kraken reports (and their Bracken-corrected .breport counterpart, if any)
 for report in reports:

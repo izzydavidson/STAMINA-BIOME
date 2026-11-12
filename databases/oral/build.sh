@@ -5,13 +5,23 @@
 # Usage:
 #   bash build.sh --db /path/to/output/stamina-biome-oral \
 #                 --genomes /path/to/camisim_genomes/oral/fasta \
-#                 [--threads 8]
+#                 [--threads 8] [--keep-seqid-map]
+#
+#   --keep-seqid-map  Do NOT delete seqid2taxid.map before kraken2-build --build.
+#                     By default it is deleted, and kraken2-build regenerates it
+#                     from library/*/prelim_map.txt — which RE-ADDS any sequences
+#                     deliberately removed from a curated map (e.g. contaminant
+#                     exclusions). With this flag the existing map is used as-is,
+#                     so library sequences missing from it are NOT indexed (the
+#                     count is printed after the build).
+#   To add genomes to an existing DB incrementally, use databases/rebuild_site_db.sh.
 
 set -euo pipefail
 
 DB_PATH=""
 GENOME_DIR=""
 THREADS=4
+KEEP_SEQID_MAP=false
 DOCKER_IMAGE="stamina-biome-tools-lr:dev"
 READLENS=(500 750 1000 1200 1500 2000)
 KMER=35
@@ -21,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --db)       DB_PATH="$2";     shift 2 ;;
     --genomes)  GENOME_DIR="$2";  shift 2 ;;
     --threads)  THREADS="$2";     shift 2 ;;
+    --keep-seqid-map) KEEP_SEQID_MAP=true; shift 1 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -94,7 +105,7 @@ for acc in "${ADDITIONAL_ACCS[@]}"; do
   log "  Fetching $acc (taxid=$ADDITIONAL_TAXID)"
   parts="${acc#*_}"; parts="${parts%%.*}"
   ftp_sub="${acc%%_*}/${parts:0:3}/${parts:3:3}/${parts:6:3}"
-  folder=$(curl -s "${NCBI_FTP}/${ftp_sub}/" | grep -oP "href=\"(${acc}[^\"]+)/\"" | head -1 | grep -oP "(?<=href=\")[^\"]+(?=/\")" || true)
+  folder=$(curl -s "${NCBI_FTP}/${ftp_sub}/" | grep -oE "href=\"${acc}[^\"]+/\"" | head -1 | sed -E 's/^href="//; s/\/"$//' || true)
   if [[ -z "$folder" ]]; then
     log "  [WARN] Could not resolve FTP path for $acc — skipping"
     continue
@@ -120,10 +131,30 @@ PYEOF
 done
 
 log "--- Step 4/5: kraken2-build --build ---"
-for f in hash.k2d opts.k2d taxo.k2d seqid2taxid.map; do rm -f "${DB_PATH}/${f}"; done
+# kraken2-build --build skips every step whose output already exists, and
+# bracken-build silently reuses an existing database.kraken (so every
+# kmer_distrib would be computed from the OLD index). Remove them all.
+STALE_FILES="hash.k2d opts.k2d taxo.k2d database.kraken"
+if [[ "$KEEP_SEQID_MAP" == "true" ]]; then
+  [[ -s "${DB_PATH}/seqid2taxid.map" ]] || { log "[FATAL] --keep-seqid-map: ${DB_PATH}/seqid2taxid.map does not exist"; exit 1; }
+  log "  Keeping existing seqid2taxid.map (--keep-seqid-map)"
+else
+  # Regenerated from library/*/prelim_map.txt — re-adds curated exclusions.
+  STALE_FILES="$STALE_FILES seqid2taxid.map"
+fi
+for f in $STALE_FILES; do rm -f "${DB_PATH}/${f}"; done
+rm -f "${DB_PATH}"/database*mers.kraken "${DB_PATH}"/database*mers.kmer_distrib
 docker run --rm -v "${DB_PATH}:/db:rw" "$DOCKER_IMAGE" \
   kraken2-build --build --db /db --threads "$THREADS"
 [[ -f "${DB_PATH}/hash.k2d" ]] || { log "[FATAL] hash.k2d not created"; exit 1; }
+if [[ "$KEEP_SEQID_MAP" == "true" ]]; then
+  unmapped=$(find "${DB_PATH}/library" -maxdepth 2 -name prelim_map.txt -exec cat {} + \
+    | awk -F'\t' 'NR==FNR {m[$1]=1; next} !($2 in m) {c++} END {print c+0}' "${DB_PATH}/seqid2taxid.map" -)
+  if [[ "$unmapped" != "0" ]]; then
+    log "  [WARN] ${unmapped} library sequence(s) are not in the kept seqid2taxid.map and were NOT indexed"
+    log "         (expected only for curated exclusions; use databases/rebuild_site_db.sh to add genomes)"
+  fi
+fi
 log "  Kraken2 index: $(du -sh "${DB_PATH}/hash.k2d" | cut -f1)"
 
 log "--- Step 5/5: bracken-build ---"
@@ -131,9 +162,11 @@ for readlen in "${READLENS[@]}"; do
   docker run --rm -v "${DB_PATH}:/db:rw" "$DOCKER_IMAGE" \
     sh -c "bracken-build -d /db -t $THREADS -l $readlen -k $KMER"
   kd="${DB_PATH}/database${readlen}mers.kmer_distrib"
-  [[ -f "$kd" ]] \
-    && log "  ✓ ${readlen}bp kmer_distrib ($(du -sh "$kd" | cut -f1))" \
-    || log "  [WARN] kmer_distrib not found for ${readlen}bp"
+  if [[ -f "$kd" ]]; then
+    log "  ✓ ${readlen}bp kmer_distrib ($(du -sh "$kd" | cut -f1))"
+  else
+    log "[FATAL] $(basename "$kd") was not created by bracken-build"; exit 1
+  fi
 done
 
 log "=== Build complete ===" && du -sh "${DB_PATH}"

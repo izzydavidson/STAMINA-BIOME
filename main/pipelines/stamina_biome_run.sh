@@ -519,6 +519,61 @@ requires_container() {
   esac
 }
 
+# host_run_dir <config>: the run folder (<work_dir>/<run_id>) this config will use, or ""
+host_run_dir() {
+  local cfg="$1" run_id work_dir
+  run_id="$(sanitize_id "$(jq -r '.run.run_id // .run_id // .runId // .run.id // empty' "${cfg}" | tr -d '\r\n')")"
+  work_dir="$(jq -r '.run.work_dir // .work_dir // .workDir // .run.output_dir // .output_dir // .outputDir // empty' "${cfg}" | tr -d '\r\n')"
+  [[ -n "${run_id}" && -n "${work_dir}" && "${work_dir}" != "null" ]] || return 0
+  echo "${work_dir%/}/${run_id}"
+}
+
+# stop_leftover_container <run_dir>
+# A container from an earlier attempt of this run can still be working: stopping a run
+# ends the launcher scripts, but not always the Docker container they started. Stop it
+# first, so two attempts never write to the same run folder.
+stop_leftover_container() {
+  local run_dir="$1" name
+  [[ -n "${run_dir}" && -s "${run_dir}/container_name.txt" ]] || return 0
+  name="$(head -n 1 "${run_dir}/container_name.txt" | tr -d '\r\n ')"
+  [[ -n "${name}" ]] || return 0
+  docker_responsive 20 || return 0
+  if [[ "$(docker inspect -f '{{.State.Running}}' "${name}" 2>/dev/null || true)" == "true" ]]; then
+    echo "[dispatch] An earlier attempt of this run is still running (container ${name}) - stopping it first"
+    docker stop -t 30 "${name}" >/dev/null 2>&1 || docker kill "${name}" >/dev/null 2>&1 || true
+  fi
+}
+
+# lr_meta_auto_resume <config>
+# Launching an lr_meta run again with the same run name and the same settings, after
+# its last attempt failed or was stopped, carries on where it stopped (finished steps
+# and samples are kept) instead of starting over. A changed setting, or a last attempt
+# that succeeded, starts over as before. STAMINA_BIOME_RESUME=0 always starts over.
+# Each launch's settings are kept in <work_dir>/.stamina-biome/launch/<run_id>.json,
+# outside the run folder, which a fresh start wipes.
+lr_meta_auto_resume() {
+  local cfg="$1" run_id run_dir snap prev_ok
+  run_dir="$(host_run_dir "${cfg}")"
+  [[ -n "${run_dir}" ]] || return 0
+  run_id="$(basename "${run_dir}")"
+  snap="$(dirname "${run_dir}")/.stamina-biome/launch/${run_id}.json"
+
+  if [[ -z "${STAMINA_BIOME_RESUME:-}" && -d "${run_dir}/lr_meta/.resume" && -s "${snap}" ]]; then
+    prev_ok="$(jq -r '.success // false' "${run_dir}/outputs.json" 2>/dev/null || true)"
+    if [[ "${prev_ok}" != "true" ]]; then
+      if [[ "$(jq -S 'del(.run.force_overwrite)' "${snap}" 2>/dev/null)" == "$(jq -S 'del(.run.force_overwrite)' "${cfg}")" ]]; then
+        echo "[dispatch] Run '${run_id}' did not finish last time and its settings are unchanged - resuming it (finished steps and samples are kept)"
+        export STAMINA_BIOME_RESUME=1
+      else
+        echo "[dispatch] Run '${run_id}' did not finish last time, but its settings changed - starting over"
+      fi
+    fi
+  fi
+  if mkdir -p "$(dirname "${snap}")" 2>/dev/null; then
+    cp -f "${cfg}" "${snap}" 2>/dev/null || true
+  fi
+}
+
 echo "[dispatch] Pipeline: ${PIPELINE_KEY}"
 echo "[dispatch] STAMINA_BIOME_IN_CONTAINER=${STAMINA_BIOME_IN_CONTAINER:-<not set>}"
 
@@ -528,6 +583,22 @@ if requires_container "${PIPELINE_KEY}"; then
   else
     echo "[dispatch] Running OUTSIDE container - delegating to run_in_container.sh"
     echo ""
+
+    # shellcheck source=docker_guard.sh
+    source "${SCRIPT_DIR}/docker_guard.sh"
+    _run_dir_host="$(host_run_dir "${CONFIG_PATH}")"
+    # A finished run that was moved to the user's Output Directory leaves a link
+    # here. A rerun must not write through that link into the moved copy (the
+    # fresh start would empty it), so drop just the link and start in outputs/.
+    # The new run replaces the moved copy when it finishes.
+    if [[ -n "${_run_dir_host}" && -L "${_run_dir_host}" ]]; then
+      echo "[dispatch] ${_run_dir_host} links to an earlier run moved to $(readlink "${_run_dir_host}") - starting this run in outputs/ instead"
+      rm -f "${_run_dir_host}"
+    fi
+    stop_leftover_container "${_run_dir_host}"
+    if [[ "${PIPELINE_KEY}" == "lr_meta" ]]; then
+      lr_meta_auto_resume "${CONFIG_PATH}"
+    fi
 
     DELEGATE_ARGS=( --config "${CONFIG_PATH}" )
     [[ "${FORCE_OVERWRITE_CLI}" == "1" ]] && DELEGATE_ARGS+=( --force-overwrite )
@@ -542,7 +613,11 @@ if requires_container "${PIPELINE_KEY}"; then
     fi
 
     echo "[dispatch] Executing: ${RUN_CONTAINER_SCRIPT} ${DELEGATE_ARGS[*]}"
-    exec "${RUN_CONTAINER_SCRIPT}" "${DELEGATE_ARGS[@]}"
+    # Run under the Docker watchdog: if Docker crashes or hangs it is restarted
+    # and the run resumes (see docker_guard.sh, sourced above)
+    GUARD_EC=0
+    docker_guard_run "${RUN_CONTAINER_SCRIPT}" "${DELEGATE_ARGS[@]}" || GUARD_EC=$?
+    exit "${GUARD_EC}"
   fi
 else
   echo "[dispatch] Pipeline '${PIPELINE_KEY}' does not require container - running on host"
@@ -644,9 +719,19 @@ RUN_DIR="${WORK_DIR}/${RUN_ID_RESOLVED}"
 echo "[dispatch] work_dir: ${WORK_DIR}"
 echo "[dispatch] run_dir: ${RUN_DIR}"
 
+# Modules that can pick up an interrupted run where it stopped (STAMINA_BIOME_RESUME=1)
+module_supports_resume() { [[ "$1" == "lr_meta" ]]; }
+
 if [[ -d "${RUN_DIR}" ]]; then
-  if [[ "${FORCE_OVERWRITE}" == "1" ]]; then
-    rm -rf "${RUN_DIR}"
+  if [[ "${STAMINA_BIOME_RESUME:-0}" == "1" ]] && module_supports_resume "${PIPELINE_KEY}"; then
+    echo "[dispatch] Resuming interrupted run in ${RUN_DIR}"
+  elif [[ "${FORCE_OVERWRITE}" == "1" || "${STAMINA_BIOME_RESUME:-0}" == "1" ]]; then
+    # Start over in an empty folder, but keep logs/wrapper.log (the GUI creates it
+    # before launch and is still writing the run's output to it) and
+    # container_name.txt (this attempt's container, written just before it started;
+    # used to stop the container when the run is stopped)
+    find "${RUN_DIR}" -mindepth 1 -maxdepth 1 ! -name logs ! -name container_name.txt -exec rm -rf {} +
+    find "${RUN_DIR}/logs" -mindepth 1 ! -name wrapper.log -exec rm -rf {} + 2>/dev/null || true
   else
     echo "ERROR: Run directory already exists: ${RUN_DIR}" >&2
     echo "       Use --force-overwrite or set run.force_overwrite=1 to overwrite it." >&2

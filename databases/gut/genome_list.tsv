@@ -141,3 +141,10 @@ GCF_000308215.1	Methanomassiliicoccus luminyensis	1080712	ncbi_expand	Gut methan
 GCF_001042635.1	Bifidobacterium scardovii	158787	ncbi_expand	Rare gut Bifidobacterium; occasionally isolated from human feces
 GCF_900097105.1	Akkermansia glycaniphila	1679444	ncbi_expand	Mucin-degrading Akkermansia; distinct from A. muciniphila
 GCF_020091425.1	Parabacteroides goldsteinii	328812	ncbi_expand	Gut Parabacteroides; NCBI taxid 328812; HMP isolate
+
+# ── additions_2026-11.tsv (absent from DB vs core_nt comparison) ──────
+GCF_046197855.1	Hominenteromicrobium mulieris	2885357	additions_2026-11	Absent from DB; detected by core_nt comparison
+GCF_020091505.1	Bacteroides faecis	674529	additions_2026-11	Absent from DB; detected by core_nt comparison
+GCF_000949455.1	Ruthenibacterium lactatiformans	1550024	additions_2026-11	Absent from DB; detected by core_nt comparison
+GCF_016127215.1	Haemophilus parainfluenzae	729	additions_2026-11	Absent from DB; detected by core_nt comparison
+GCF_025152405.1	[Ruminococcus] lactaris	46228	additions_2026-11	Absent from DB; detected by core_nt comparison

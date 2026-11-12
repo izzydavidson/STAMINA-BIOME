@@ -1,0 +1,44 @@
+# gut DB additions — November 2026 full rebuild
+# source=new_vs_core_nt: absent from DB, reported by core_nt comparison in Test_FeMHS_471_Test6
+# source=july_orphan: in genome_list.tsv and on disk in library/added/, never registered with
+#   kraken2-build --add-to-library, so never indexed. Staging reuses the on-disk file (no download).
+# Lines starting with # are ignored by databases/rebuild_site_db.sh.
+accession	taxid	species	source	notes
+GCF_046197855.1	2885357	Hominenteromicrobium mulieris	new_vs_core_nt	8-10% of gut reads in core_nt; 210/213 traced reads unclassified by site DB
+GCF_020091505.1	674529	Bacteroides faecis	new_vs_core_nt	~3.6% in core_nt; site DB split reads between unclassified and B. thetaiotaomicron
+GCF_000949455.1	1550024	Ruthenibacterium lactatiformans	new_vs_core_nt	0.7% in core_nt; 35/36 traced reads unclassified
+GCF_016127215.1	729	Haemophilus parainfluenzae	new_vs_core_nt	0.5-0.8% in core_nt; all traced reads unclassified (NCBI now lists as Parahaemophilus; taxid unchanged)
+GCF_025152405.1	46228	[Ruminococcus] lactaris	new_vs_core_nt	0.3-0.4% in core_nt (via Bracken redistribution)
+GCF_900186885.1	29466	Veillonella parvula	new_vs_core_nt	Already in genome_list.tsv and library/added/ since 2026-07-09 but never registered, so never indexed
+GCF_000269565.1	100884	Coprobacillus cateniformis	july_orphan	Downloaded 2026-07-09, never registered; Gut Erysipelotrichaceae; common HMP isolate; NCBI taxid 100884
+GCF_001650295.1	1045010	Escherichia coli O157	july_orphan	Downloaded 2026-07-09, never registered; EHEC; Shiga toxin; haemolytic uremic syndrome
+GCF_009697165.1	105843	Anaerobutyricum soehngenii	july_orphan	Downloaded 2026-07-09, never registered; Was Eubacterium soehngenii; butyrate producer; NCBI taxid 105843
+GCF_000169255.2	106588	Pseudoflavonifractor capillosus	july_orphan	Downloaded 2026-07-09, never registered; Was Ruminococcus capillosus; gut commensal
+GCF_000308215.1	1080712	Methanomassiliicoccus luminyensis	july_orphan	Downloaded 2026-07-09, never registered; Gut methanogen; H2-using; NCBI taxid 1080712
+GCF_002243135.1	1260	Finegoldia magna	july_orphan	Downloaded 2026-07-09, never registered; Obligate anaerobe; gut commensal
+GCF_025149625.1	147206	Collinsella stercoris	july_orphan	Downloaded 2026-07-09, never registered; Gut Coriobacteriia; bile acid transformation
+GCF_000063585.1	1491	Clostridium botulinum	july_orphan	Downloaded 2026-07-09, never registered; Botulism toxin; food/wound/infant
+GCF_012317185.1	1522	Clostridium innocuum	july_orphan	Downloaded 2026-07-09, never registered; Gut Clostridiales; enriched in IBD and CDI patients
+GCF_016728785.1	1547	Thomasclavelia ramosa	july_orphan	Downloaded 2026-07-09, never registered; Was Ruminococcus gnavus complex; NCBI taxid 1547
+GCF_001042635.1	158787	Bifidobacterium scardovii	july_orphan	Downloaded 2026-07-09, never registered; Rare gut Bifidobacterium; occasionally isolated from human feces
+GCF_000155515.2	1597	Lacticaseibacillus paracasei	july_orphan	Downloaded 2026-07-09, never registered; Gut commensal; probiotic strains; NCBI taxid 1597
+GCF_000196035.1	1639	Listeria monocytogenes	july_orphan	Downloaded 2026-07-09, never registered; Listeriosis; fatal in pregnancy/immunocomp
+GCF_001025155.1	1683	Bifidobacterium angulatum	july_orphan	Downloaded 2026-07-09, never registered; Adult gut commensal
+GCF_965585535.1	2093857	Dysosmobacter welbionis	july_orphan	Downloaded 2026-07-09, never registered; Potent butyrate producer; described 2020; gut health biomarker
+GCF_000014025.1	28197	Arcobacter butzleri	july_orphan	Downloaded 2026-07-09, never registered; Emerging enteropathogen; water/poultry
+GCF_000006765.1	287	Pseudomonas aeruginosa	july_orphan	Downloaded 2026-07-09, never registered; Gut opportunist in ICU/immunocomp
+GCF_020091425.1	328812	Parabacteroides goldsteinii	july_orphan	Downloaded 2026-07-09, never registered; Gut Parabacteroides; NCBI taxid 328812; HMP isolate
+GCF_041431435.1	39777	Veillonella atypica	july_orphan	Downloaded 2026-07-09, never registered; Gut Veillonella; common HMP isolate; lactate crossfeeder
+GCF_000478885.1	446660	Adlercreutzia equolifaciens	july_orphan	Downloaded 2026-07-09, never registered; Equol producer from daidzein; Coriobacteriia; gut commensal
+GCF_034356035.1	53443	Blautia hydrogenotrophica	july_orphan	Downloaded 2026-07-09, never registered; H2-consuming acetogen; gut commensal
+GCF_025144995.1	626932	Alistipes indistinctus	july_orphan	Downloaded 2026-07-09, never registered; Gut Alistipes; NCBI taxid 626932; UHGG abundant
+GCF_000253175.1	630	Yersinia enterocolitica	july_orphan	Downloaded 2026-07-09, never registered; Yersiniosis; cold-chain foodborne
+GCF_900637475.1	633	Yersinia pseudotuberculosis	july_orphan	Downloaded 2026-07-09, never registered; Foodborne illness; Far East scarlet fever
+GCF_000014805.1	644	Aeromonas hydrophila	july_orphan	Downloaded 2026-07-09, never registered; Waterborne gastroenteritis; wound infections
+GCF_900476005.1	648	Aeromonas caviae	july_orphan	Downloaded 2026-07-09, never registered; Gastroenteritis; especially in children
+GCF_008369605.1	666	Vibrio cholerae	july_orphan	Downloaded 2026-07-09, never registered; Cholera; pandemic risk
+GCF_000196095.1	670	Vibrio parahaemolyticus	july_orphan	Downloaded 2026-07-09, never registered; Seafood-associated gastroenteritis
+GCF_000526995.1	69825	Lacrimispora indolis	july_orphan	Downloaded 2026-07-09, never registered; Was Clostridium clostridioforme complex; common gut isolate
+GCF_900167555.1	745368	Gemmiger formicilis	july_orphan	Downloaded 2026-07-09, never registered; Ruminococcaceae; gut commensal; HMP abundant
+GCF_003019295.1	851	Fusobacterium nucleatum	july_orphan	Downloaded 2026-07-09, never registered; Colorectal cancer; gut coloniser
+GCF_008151785.1	89152	Peptacetobacter hiranonis	july_orphan	Downloaded 2026-07-09, never registered; Was Clostridium hiranonis; key 7α-dehydroxylation secondary bile acid producer

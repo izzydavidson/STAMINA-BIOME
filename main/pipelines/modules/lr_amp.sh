@@ -28,6 +28,13 @@ if [[ ! -f "${TOOLS_SH}" ]]; then
 fi
 # shellcheck disable=SC1090
 source "${TOOLS_SH}"
+SITE_ROUTING_SH="${PIPELINES_DIR}/site_routing.sh"
+if [[ ! -f "${SITE_ROUTING_SH}" ]]; then
+  echo "ERROR: Missing shared site routing file: ${SITE_ROUTING_SH}" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "${SITE_ROUTING_SH}"
 
 ############################################
 ##              COLOURS                   ##
@@ -638,51 +645,28 @@ SAMPLE_TYPE_RAW="$(jq_first "${CONFIG_PATH}" '.input.sample_type' '.specimen' '.
 SAMPLE_TYPE_NORM="$(printf "%s" "${SAMPLE_TYPE_RAW:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 [[ -n "${SAMPLE_TYPE_NORM}" ]] || SAMPLE_TYPE_NORM="unknown"
 
-declare -A SITE_BY_BARCODE
-declare -A NAME_BY_BARCODE
+# Per-sample site routing lives in site_routing.sh. A FASTQ_SINGLE run with a
+# global sample_type applies it to every sample; a sample sheet (barcode /
+# sample_name / site) or config .sample_sites gives each sample its own site.
+SAMPLE_TYPE_NORM="$(site_normalize_name "${SAMPLE_TYPE_NORM}")"
+[[ -n "${SAMPLE_TYPE_NORM}" ]] || SAMPLE_TYPE_NORM="unknown"
+SAMPLE_SITES_TSV="${RESULTS_DIR}/sample_sites.tsv"
 
 load_barcode_site_map() {
-  local sheet="${1:-}"
-  SITE_BY_BARCODE=()
-  NAME_BY_BARCODE=()
-
-  if [[ "${INPUT_STYLE}" == "FASTQ_SINGLE" && -n "${SAMPLE_TYPE_NORM}" && "${SAMPLE_TYPE_NORM}" != "unknown" ]]; then
-    log_info "Using input.sample_type='${SAMPLE_TYPE_RAW}' for all samples"
-    for bc in "${BARCODE_IDS[@]}"; do
-      SITE_BY_BARCODE["${bc}"]="${SAMPLE_TYPE_NORM}"
-    done
+  site_routing_load "${CONFIG_PATH}" "${1:-}"
+  if [[ "${SITE_ROUTING_ACTIVE}" -eq 1 ]]; then
+    log_info "Per-sample sites loaded; unmapped samples use sample_type='${SAMPLE_TYPE_RAW:-unknown}'."
+  else
+    log_info "No per-sample sites; using config sample_type for all barcodes."
   fi
-
-  if [[ -z "${sheet}" || "${sheet}" == "null" ]]; then
-    log_info "No sample sheet provided; using config sample_type for all barcodes."
-    return 0
-  fi
-
-  if [[ ! -f "${sheet}" ]]; then
-    log_warn "Sample sheet not found: ${sheet}; using config sample_type."
-    return 0
-  fi
-
-  log_info "Loading barcode site map from: ${sheet}"
-  while IFS=$'\t' read -r barcode site rest; do
-    [[ -z "${barcode}" || "${barcode}" == "barcode" ]] && continue
-    barcode="$(echo "${barcode}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-    site="$(echo "${site}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-    SITE_BY_BARCODE["${barcode}"]="${site}"
-  done < "${sheet}"
-
-  log_info "Loaded site mapping for ${#SITE_BY_BARCODE[@]} barcodes"
 }
 
 is_vaginal_barcode() {
-  local barcode="${1:-}"
-  local site="${SITE_BY_BARCODE[${barcode}]:-unknown}"
-  [[ "${site}" == "vaginal" || "${site}" == "vag" || "${site}" == "v" ]]
+  [[ "$(get_site_for_barcode "${1:-}")" == "vaginal" ]]
 }
 
 get_site_for_barcode() {
-  local barcode="${1:-}"
-  echo "${SITE_BY_BARCODE[${barcode}]:-unknown}"
+  site_for_sample "${1:-}" "${SAMPLE_TYPE_NORM:-unknown}"
 }
 
 check_bracken_available() {
@@ -709,6 +693,17 @@ check_bracken_available() {
 
 convert_fast5_to_pod5() {
   [[ -n "${STAGED_FAST5_DIR}" ]] || die "No staged FAST5 dir found"
+
+  # POD5 input (staged through the same FAST5_DIR route): Dorado reads the .pod5
+  # files directly, so there is nothing to convert.
+  local pod5_src
+  pod5_src="$(pod5_dir_if_present "${STAGED_FAST5_DIR}" "${POD5_STAGE_DIR}/inputs")"
+  if [[ -n "${pod5_src}" ]]; then
+    log_info "POD5 input detected - skipping FAST5 -> POD5 conversion: ${pod5_src}"
+    echo "${pod5_src}"
+    return 0
+  fi
+
   check_cmd "${POD5_BIN}"
   local outpod5="${POD5_STAGE_DIR}/${RUN_NAME}.pod5"
 
@@ -718,7 +713,9 @@ convert_fast5_to_pod5() {
     return 0
   fi
 
-  "${POD5_BIN}" convert fast5 "${STAGED_FAST5_DIR}" -o "${outpod5}"
+  # stdout -> stderr: this function's stdout is captured as the POD5 path
+  "${POD5_BIN}" convert fast5 --recursive "${STAGED_FAST5_DIR}" -o "${outpod5}" >&2 || return $?
+  [[ -s "${outpod5}" ]] || { log_fail "pod5 convert produced no output: ${outpod5}"; return 1; }
   echo "${outpod5}"
 }
 
@@ -745,15 +742,38 @@ dorado_basecall_to_bam() {
     log_warn "Model download step completed (may have already been cached)"
   }
 
+  # The model must match the data's sample rate (4 kHz vs 5 kHz signal); if it
+  # does not, use an installed model of the same family that does.
+  local model_name="${DORADO_MODEL}" data_rate
+  data_rate="$(pod5_sample_rate "${pod5_path}" "${POD5_BIN}")"
+  if [[ -n "${data_rate}" && -d "${model_dir}/${DORADO_MODEL}" ]]; then
+    model_name="$(dorado_model_for_data "${model_dir}" "${DORADO_MODEL}" "${data_rate}")"
+    if [[ -z "${model_name}" ]]; then
+      log_fail "Data is sampled at ${data_rate} Hz but ${DORADO_MODEL} expects $(dorado_model_sample_rate "${model_dir}/${DORADO_MODEL}") Hz, and no matching ${DORADO_MODEL%@*} model is installed in ${model_dir}."
+      return 2
+    elif [[ "${model_name}" != "${DORADO_MODEL}" ]]; then
+      log_warn "${DORADO_MODEL} expects $(dorado_model_sample_rate "${model_dir}/${DORADO_MODEL}") Hz but the data is ${data_rate} Hz - using ${model_name} instead."
+    fi
+  fi
+
+  # With a barcoding kit, classify barcodes during basecalling and trim nothing:
+  # basecaller trimming strips the primer flanks that demux needs to find the barcode
+  local -a kit_args=()
+  if [[ -n "${BARCODE_KIT:-}" && "${BARCODE_KIT}" != "null" ]]; then
+    kit_args=( --kit-name "${BARCODE_KIT}" --no-trim )
+    log_info "Basecalling with barcode kit ${BARCODE_KIT} (reads not trimmed; demux and trim steps follow)"
+  fi
+
   # Run basecaller with explicit model path if downloaded to custom location
-  local model_path="${model_dir}/${DORADO_MODEL}"
+  local model_path="${model_dir}/${model_name}"
   if [[ -d "${model_path}" ]]; then
     log_info "Using downloaded model at: ${model_path}"
-    "${DORADO_BIN}" basecaller --device cpu "${model_path}" "${pod5_path}" > "${outbam}"
+    "${DORADO_BIN}" basecaller --device cpu ${kit_args[@]+"${kit_args[@]}"} "${model_path}" "${pod5_path}" > "${outbam}" || { rm -f "${outbam}"; return 1; }
   else
     # Fall back to model name (Dorado will use default cache)
-    "${DORADO_BIN}" basecaller --device cpu "${DORADO_MODEL}" "${pod5_path}" > "${outbam}"
+    "${DORADO_BIN}" basecaller --device cpu ${kit_args[@]+"${kit_args[@]}"} "${model_name}" "${pod5_path}" > "${outbam}" || { rm -f "${outbam}"; return 1; }
   fi
+  [[ -s "${outbam}" ]] || { log_fail "Dorado basecaller produced no reads: ${outbam}"; rm -f "${outbam}"; return 1; }
   echo "${outbam}"
 }
 
@@ -792,10 +812,16 @@ dorado_trim_bam_to_fastq_per_barcode() {
   local any=0
   for bbam in "${demux_dir}"/*.bam "${demux_dir}"/*/*.bam; do
     [[ -e "${bbam}" ]] || continue
-    any=1
 
     local barcode
     barcode="$(basename "${bbam}" .bam)"
+    # Reads Dorado could not assign to a barcode stay in the demux folder only:
+    # every later step (QC, filtering, human removal, taxonomy) uses barcoded reads.
+    if is_unbarcoded_bin "${barcode}"; then
+      log_info "Leaving out ${barcode} (reads with no barcode): kept at ${bbam}, not processed further"
+      continue
+    fi
+    any=1
 
     local trimmed_bam="${TRIM_DIR}/${RUN_NAME}_${barcode}_trimmed.bam"
     # Note: dorado trim auto-detects adapters/primers. Custom primers can be provided via --primer-sequences.
@@ -815,7 +841,7 @@ dorado_trim_bam_to_fastq_per_barcode() {
     "${SAMTOOLS_BIN}" bam2fq "${trimmed_bam}" > "${fq}"
   done
 
-  [[ "${any}" -eq 1 ]] || die "No demux BAMs found under ${demux_dir}"
+  [[ "${any}" -eq 1 ]] || die "No barcoded demux BAMs found under ${demux_dir} (only reads with no barcode)"
   echo "${RAW_READS_DIR}/${RUN_NAME}"
 }
 
@@ -1015,6 +1041,26 @@ run_valencia() {
     fi
   fi
 
+  # Mixed-site runs: restrict VALENCIA to the vaginal samples (skip if there are none)
+  export STAMINA_VALENCIA_SAMPLES=""
+  if [[ "${SITE_ROUTING_ACTIVE}" -eq 1 && "${VALENCIA_ENABLED}" != "false" && -d "${emu_run_dir}" ]]; then
+    local -a vag_ids=()
+    local d id
+    shopt -s nullglob
+    for d in "${emu_run_dir}"/*/; do
+      id="$(basename "${d}")"
+      is_vaginal_barcode "${id}" && vag_ids+=( "${id}" )
+    done
+    shopt -u nullglob
+    if [[ ${#vag_ids[@]} -gt 0 ]]; then
+      VALENCIA_SHOULD_RUN="yes"
+      STAMINA_VALENCIA_SAMPLES="$(IFS=,; echo "${vag_ids[*]}")"
+      log_info "VALENCIA restricted to vaginal samples: ${STAMINA_VALENCIA_SAMPLES}"
+    else
+      VALENCIA_SHOULD_RUN="no"
+    fi
+  fi
+
   if [[ "${VALENCIA_SHOULD_RUN}" != "yes" ]]; then
     local started ended
     started="$(iso_now)"; ended="$(iso_now)"
@@ -1133,6 +1179,11 @@ def parse_emu_abundance(path: str):
 # Find all Emu rel-abundance TSV files
 emu_path = Path(emu_run_dir)
 emu_files = list(emu_path.glob("*/*_rel-abundance.tsv"))
+# Mixed-site runs pass the vaginal sample IDs; VALENCIA is only meaningful for those
+_valencia_only = [x for x in os.environ.get("STAMINA_VALENCIA_SAMPLES", "").split(",") if x]
+if _valencia_only:
+    emu_files = [e for e in emu_files if e.parent.name in _valencia_only]
+    print(f"Restricting VALENCIA to vaginal samples: {', '.join(_valencia_only)}")
 
 if not emu_files:
     print(f"WARNING: No Emu rel-abundance files found in {emu_run_dir}")
@@ -1901,6 +1952,16 @@ main() {
   steps_append "${STEPS_JSON}" "taxonomy_kraken2" "skipped" "Kraken2 disabled for lr_amp (Emu-only)" "" "" "0" "${started}" "${ended}"
 
   # Run VALENCIA (inline Python, mirrors sr_amp approach)
+  # Per-sample site table (sample_id / sample_name / site) for downstream outputs
+  if [[ -d "${EMU_DIR}/${RUN_NAME}" ]]; then
+    local -a _site_ids=()
+    local _d
+    shopt -s nullglob
+    for _d in "${EMU_DIR}/${RUN_NAME}"/*/; do _site_ids+=( "$(basename "${_d}")" ); done
+    shopt -u nullglob
+    [[ ${#_site_ids[@]} -gt 0 ]] && site_write_samples_tsv "${SAMPLE_SITES_TSV}" "${SAMPLE_TYPE_NORM:-unknown}" "${_site_ids[@]}"
+  fi
+
   run_valencia
 
   local postprocess_dir="${RESULTS_DIR}/postprocess"

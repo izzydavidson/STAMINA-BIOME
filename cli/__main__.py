@@ -77,7 +77,23 @@ def build_run_epilog():
   oral     Oral microbiome samples
   skin     Skin microbiome samples
   other    Generic sample type (default)
+  mixed    Pooled run with several body sites: give each barcode its site in
+           --sample-sheet (site column) and each site its DB with --site-db
 """
+
+
+def parse_site_dbs(values):
+    """Parse repeated --site-db SITE=PATH values into {site: path}."""
+    site_dbs = {}
+    for raw in values or []:
+        site, sep, path = (raw or "").partition("=")
+        site = site.strip().lower()
+        path = path.strip()
+        if not sep or not site or not path:
+            print(f"Error: --site-db expects SITE=PATH, got: {raw!r}", file=sys.stderr)
+            sys.exit(1)
+        site_dbs[site] = path
+    return site_dbs
 
 
 def print_run_help_header():
@@ -205,8 +221,9 @@ Use 'stamina-biome <command> --help' for more information on a specific command.
         "--sample-type",
         default="other",
         metavar="TYPE",
-        help="Sample type: vaginal | gut | oral | skin | other (default: other). "
-             "'vaginal' auto-enables Valencia CST analysis",
+        help="Sample type: vaginal | gut | oral | skin | other | mixed (default: other). "
+             "'vaginal' auto-enables Valencia CST analysis. 'mixed' = pooled run with "
+             "several body sites; set each barcode's site in the --sample-sheet 'site' column",
     )
     sample_group.add_argument(
         "--sample-id",
@@ -228,9 +245,11 @@ Use 'stamina-biome <command> --help' for more information on a specific command.
         "--sample-sheet",
         default="",
         metavar="PATH",
-        help="Path to a barcode->sample-name CSV/TSV (header: barcode,sample_name) for "
+        help="Path to a barcode->sample-name CSV/TSV (header: barcode,sample_name[,site]) for "
              "demultiplexed runs. Relabels barcode IDs with human-readable sample names "
-             "in final tables/plots (heatmap, piechart, stacked bar, results.csv).",
+             "in final tables/plots (heatmap, piechart, stacked bar, results.csv). The "
+             "optional 'site' column (vaginal|gut|oral|skin|other) gives each barcode its "
+             "own body site for mixed-site runs.",
     )
     sample_group.add_argument(
         "--valencia",
@@ -317,6 +336,23 @@ Use 'stamina-biome <command> --help' for more information on a specific command.
         metavar="PATH",
         help="Kraken2 database path (required for sr_meta, lr_meta; also used by lr_amp with --amplicon-type partial). "
              "Download from: https://benlangmead.github.io/aws-indexes/k2",
+    )
+    db_group.add_argument(
+        "--site-db",
+        action="append",
+        default=[],
+        metavar="SITE=PATH",
+        help="Kraken2 database for one body site in a mixed-site run (repeatable), e.g. "
+             "--site-db skin=/db/skin --site-db gut=/db/gut. Samples whose site has no "
+             "--site-db fall back to --db (sr_meta, lr_meta).",
+    )
+    db_group.add_argument(
+        "--comparison-db",
+        default="",
+        metavar="PATH",
+        help="Optional common Kraken2 database: every sample is ALSO classified against it "
+             "with one parameter set, for between-site comparisons that are not confounded "
+             "by database differences (sr_meta, lr_meta).",
     )
     db_group.add_argument(
         "--emu-db",
@@ -983,6 +1019,8 @@ Use 'stamina-biome <command> --help' for more information on a specific command.
                     seq_type=args.seq_type,
                     emu_min_pid=args.emu_min_pid,
                     kraken2_db=args.db,
+                    site_dbs=parse_site_dbs(args.site_db),
+                    comparison_db=args.comparison_db or "",
                     emu_db=args.emu_db,
                     kraken_confidence=args.kraken_confidence,
                     kraken_min_hit_groups=args.kraken_min_hit_groups,
@@ -1127,6 +1165,8 @@ Use 'stamina-biome <command> --help' for more information on a specific command.
             seq_type=args.seq_type,
             emu_min_pid=args.emu_min_pid,
             kraken2_db=args.db,
+            site_dbs=parse_site_dbs(args.site_db),
+            comparison_db=args.comparison_db or "",
             emu_db=args.emu_db,
             kraken_confidence=args.kraken_confidence,
             kraken_min_hit_groups=args.kraken_min_hit_groups,

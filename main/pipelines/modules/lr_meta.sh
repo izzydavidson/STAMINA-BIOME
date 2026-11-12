@@ -28,6 +28,13 @@ if [[ ! -f "${TOOLS_SH}" ]]; then
 fi
 # shellcheck disable=SC1090
 source "${TOOLS_SH}"
+SITE_ROUTING_SH="${PIPELINES_DIR}/site_routing.sh"
+if [[ ! -f "${SITE_ROUTING_SH}" ]]; then
+  echo "ERROR: Missing shared site routing file: ${SITE_ROUTING_SH}" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "${SITE_ROUTING_SH}"
 
 ############################################
 ##              COLOURS                   ##
@@ -351,8 +358,44 @@ LOGS_DIR="${MODULE_OUT_DIR}/logs"
 STEPS_JSON="${MODULE_OUT_DIR}/steps.json"
 mkdir -p "${INPUTS_DIR}" "${RESULTS_DIR}" "${LOGS_DIR}"
 
-# Reset steps.json at the start of each run (prevent accumulation from previous runs)
-printf "[]\n" > "${STEPS_JSON}"
+# Resume after an infrastructure failure (e.g. Docker crashed and was restarted):
+# the dispatcher's retry loop sets STAMINA_BIOME_RESUME=1. Finished steps and
+# finished samples recorded under .resume/ are skipped; anything else reruns.
+RESUME_DIR="${MODULE_OUT_DIR}/.resume"
+RESUME_ACTIVE=0
+if [[ "${STAMINA_BIOME_RESUME:-0}" == "1" && -d "${RESUME_DIR}" ]]; then
+  RESUME_ACTIVE=1
+  log_info "Resuming an interrupted run: finished steps and samples will be skipped"
+else
+  rm -rf "${RESUME_DIR}"
+fi
+mkdir -p "${RESUME_DIR}"
+
+# resume_step_done <step>: true when resuming and <step> finished in an earlier
+# attempt; restores the variables saved with it.
+resume_step_done() {
+  [[ "${RESUME_ACTIVE}" == "1" && -f "${RESUME_DIR}/$1.env" ]] || return 1
+  # shellcheck disable=SC1090
+  source "${RESUME_DIR}/$1.env"
+  log_info "Resume: skipping $1 (finished in an earlier attempt)"
+}
+
+# resume_mark_step <step> [VAR...]: record <step> as finished, with the variables
+# later steps read from it.
+resume_mark_step() {
+  local step="$1" var
+  shift
+  for var in "$@"; do printf '%s=%q\n' "${var}" "${!var-}"; done > "${RESUME_DIR}/${step}.env.tmp"
+  mv "${RESUME_DIR}/${step}.env.tmp" "${RESUME_DIR}/${step}.env"
+}
+
+# Per-sample markers for the long per-sample loops
+resume_sample_done() { [[ "${RESUME_ACTIVE}" == "1" && -f "${RESUME_DIR}/$1/$2.done" ]]; }
+resume_mark_sample() { mkdir -p "${RESUME_DIR}/$1"; : > "${RESUME_DIR}/$1/$2.done"; }
+
+# Reset steps.json at the start of each run (prevent accumulation from previous
+# runs); a resumed run keeps the earlier attempt's entries.
+[[ "${RESUME_ACTIVE}" == "1" ]] || printf "[]\n" > "${STEPS_JSON}"
 
 FASTQ_STAGE_DIR="${INPUTS_DIR}/fastq"
 FAST5_STAGE_DIR="${INPUTS_DIR}/fast5"
@@ -368,6 +411,8 @@ INDEX_DIR="${RESULTS_DIR}/human_index"
 ALN_DIR="${RESULTS_DIR}/human_align"
 NONHUMAN_DIR="${RESULTS_DIR}/nonhuman"
 TAXO_ROOT="${RESULTS_DIR}/taxonomy"
+COMPARISON_TAXO_ROOT="${RESULTS_DIR}/taxonomy_comparison_db"
+SAMPLE_SITES_TSV="${RESULTS_DIR}/sample_sites.tsv"
 VALENCIA_TMP="${RESULTS_DIR}/valencia/tmp"
 VALENCIA_RESULTS="${RESULTS_DIR}/valencia/results"
 
@@ -379,6 +424,11 @@ mkdir -p \
 
 RUN_NAME_BASE="$(jq_first "${CONFIG_PATH}" '.run.run_name' '.run.name' '.run_name' '.id' '.run_id' || true)"
 [[ -n "${RUN_NAME_BASE}" ]] || RUN_NAME_BASE="$(date +%Y%m%d_%H%M%S)"
+# Every output folder is named after the run, so a resumed run must reuse it
+if [[ "${RESUME_ACTIVE}" == "1" && -s "${RESUME_DIR}/run_name" ]]; then
+  RUN_NAME_BASE="$(cat "${RESUME_DIR}/run_name")"
+fi
+printf '%s\n' "${RUN_NAME_BASE}" > "${RESUME_DIR}/run_name"
 RUN_NAME="${RUN_NAME_BASE}"
 
 SAMPLE_SHEET="$(jq_first "${CONFIG_PATH}" '.inputs.sample_sheet' '.input.sample_sheet' '.sample_sheet' '.barcode_sites_tsv' || true)"
@@ -757,6 +807,11 @@ check_bracken_available() {
     log_warn "Bracken not found. Bracken will be skipped; VALENCIA can fallback to kreport."
     return 0
   fi
+  if [[ ( -z "${KRAKEN2_DB}" || "${KRAKEN2_DB}" == "null" ) && ${#DB_BY_SITE[@]} -gt 0 ]]; then
+    # Per-site DBs only: kmer_distrib files are checked per sample against each site DB
+    BRACKEN_AVAILABLE="1"
+    return 0
+  fi
   [[ -n "${KRAKEN2_DB}" && "${KRAKEN2_DB}" != "null" ]] || {
     BRACKEN_AVAILABLE="0"; USE_BRACKEN_VAGINAL="0"; USE_BRACKEN_NONVAGINAL="0"; VALENCIA_FORCE_BRACKEN="0"
     log_warn "KRAKEN2_DB not set; bracken disabled."
@@ -790,78 +845,52 @@ SAMPLE_TYPE_RAW="$(jq_first "${CONFIG_PATH}" '.input.sample_type' '.specimen' '.
 SAMPLE_TYPE_NORM="$(printf "%s" "${SAMPLE_TYPE_RAW:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
 [[ -n "${SAMPLE_TYPE_NORM}" ]] || SAMPLE_TYPE_NORM="unknown"
 
-# Associative array: barcode -> site (e.g. "barcode01" -> "vaginal")
-declare -A SITE_BY_BARCODE
-# Associative array: barcode -> friendly name (e.g. "barcode01" -> "Sample_A")
-declare -A NAME_BY_BARCODE
+# Per-sample site routing lives in site_routing.sh (SITE_BY_SAMPLE, DB_BY_SITE, ...).
+# Sites come from the global sample_type, the sample sheet (barcode / sample_name /
+# site columns) and config .sample_sites, so one pooled run can mix body sites.
+SAMPLE_TYPE_NORM="$(site_normalize_name "${SAMPLE_TYPE_NORM}")"
+[[ -n "${SAMPLE_TYPE_NORM}" ]] || SAMPLE_TYPE_NORM="unknown"
 
-# Load barcode-to-site mapping from sample sheet (TSV with columns: barcode, site)
-# If sample sheet not provided or doesn't exist, all barcodes default to "unknown"
-# EXCEPT: If input.sample_type is set in config, use that for FASTQ_SINGLE mode
 load_barcode_site_map() {
   local sheet="${1:-}"
-  SITE_BY_BARCODE=()
-  NAME_BY_BARCODE=()
-
-  # If no sample sheet provided but sample_type is set globally, will fall back to SAMPLE_TYPE_NORM
-  # This allows --sample-type vaginal to apply to all barcodes without a sample sheet
-  if [[ -z "${sheet}" || "${sheet}" == "null" ]]; then
-    if [[ -n "${SAMPLE_TYPE_NORM}" && "${SAMPLE_TYPE_NORM}" != "unknown" ]]; then
-      log_info "No sample sheet provided; using global sample_type='${SAMPLE_TYPE_RAW}' for all barcodes."
-    else
-      log_info "No sample sheet provided; all barcodes treated as unknown site."
-    fi
-    return 0
-  fi
-
-  if [[ ! -f "${sheet}" ]]; then
-    log_warn "Sample sheet not found: ${sheet}; all barcodes treated as unknown site."
-    return 0
-  fi
-
-  log_info "Loading barcode site map from: ${sheet}"
-  local line_num=0
-  while IFS=$'\t' read -r barcode site rest; do
-    ((line_num++)) || true
-    # Skip header or empty lines
-    [[ -z "${barcode}" || "${barcode}" == "barcode" ]] && continue
-    # Normalize barcode name (lowercase)
-    barcode="$(echo "${barcode}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-    site="$(echo "${site}" | tr '[:upper:]' '[:lower:]' | tr -d ' ')"
-    SITE_BY_BARCODE["${barcode}"]="${site}"
-  done < "${sheet}"
-
-  log_info "Loaded site mapping for ${#SITE_BY_BARCODE[@]} barcodes"
-}
-
-# Check if a barcode should be treated as a vaginal sample
-# Returns 0 (true) if vaginal, 1 (false) otherwise
-# Falls back to global SAMPLE_TYPE_NORM if barcode not in mapping
-is_vaginal_barcode() {
-  local barcode="${1:-}"
-  local site="${SITE_BY_BARCODE[${barcode}]:-${SAMPLE_TYPE_NORM:-unknown}}"
-  [[ "${site}" == "vaginal" || "${site}" == "vag" || "${site}" == "v" ]]
-}
-
-# Get site name for a barcode (returns global SAMPLE_TYPE_NORM or "unknown" if not mapped)
-get_site_for_barcode() {
-  local barcode="${1:-}"
-  echo "${SITE_BY_BARCODE[${barcode}]:-${SAMPLE_TYPE_NORM:-unknown}}"
-}
-
-# Get friendly name for a barcode (returns barcode ID if no name mapped)
-get_name_for_barcode() {
-  local barcode="${1:-}"
-  # If NAME_BY_BARCODE has an entry, use it; otherwise return the barcode itself
-  if [[ -n "${NAME_BY_BARCODE[${barcode}]:-}" ]]; then
-    echo "${NAME_BY_BARCODE[${barcode}]}"
+  site_routing_load "${CONFIG_PATH}" "${sheet}"
+  if [[ "${SITE_ROUTING_ACTIVE}" -eq 1 ]]; then
+    log_info "Per-sample sites loaded; unmapped samples use sample_type='${SAMPLE_TYPE_RAW:-unknown}'."
+  elif [[ -n "${SAMPLE_TYPE_NORM}" && "${SAMPLE_TYPE_NORM}" != "unknown" ]]; then
+    log_info "No per-sample sites; using global sample_type='${SAMPLE_TYPE_RAW}' for all barcodes."
   else
-    echo "${barcode}"
+    log_info "No per-sample sites and no sample_type; all barcodes treated as unknown site."
   fi
+}
+
+# Site for a barcode (per-sample site, else global SAMPLE_TYPE_NORM)
+get_site_for_barcode() {
+  site_for_sample "${1:-}" "${SAMPLE_TYPE_NORM:-unknown}"
+}
+
+# Returns 0 (true) if the barcode resolves to a vaginal sample
+is_vaginal_barcode() {
+  [[ "$(get_site_for_barcode "${1:-}")" == "vaginal" ]]
+}
+
+# Friendly name for a barcode (returns barcode ID if no name mapped)
+get_name_for_barcode() {
+  site_name_for_sample "${1:-}"
 }
 
 convert_fast5_to_pod5() {
   [[ -n "${STAGED_FAST5_DIR}" ]] || die "No staged FAST5 dir found"
+
+  # POD5 input (staged through the same FAST5_DIR route): Dorado reads the .pod5
+  # files directly, so there is nothing to convert.
+  local pod5_src
+  pod5_src="$(pod5_dir_if_present "${STAGED_FAST5_DIR}" "${POD5_STAGE_DIR}/inputs")"
+  if [[ -n "${pod5_src}" ]]; then
+    log_info "POD5 input detected - skipping FAST5 -> POD5 conversion: ${pod5_src}"
+    echo "${pod5_src}"
+    return 0
+  fi
+
   check_cmd "${POD5_BIN}"
   local outpod5="${POD5_STAGE_DIR}/${RUN_NAME}.pod5"
 
@@ -871,7 +900,9 @@ convert_fast5_to_pod5() {
     return 0
   fi
 
-  "${POD5_BIN}" convert fast5 "${STAGED_FAST5_DIR}" -o "${outpod5}"
+  # stdout -> stderr: this function's stdout is captured as the POD5 path
+  "${POD5_BIN}" convert fast5 --recursive "${STAGED_FAST5_DIR}" -o "${outpod5}" >&2 || return $?
+  [[ -s "${outpod5}" ]] || { log_fail "pod5 convert produced no output: ${outpod5}"; return 1; }
   echo "${outpod5}"
 }
 
@@ -902,15 +933,38 @@ dorado_basecall_to_bam() {
     log_warn "Model download step completed (may have already been cached)"
   }
 
+  # The model must match the data's sample rate (4 kHz vs 5 kHz signal); if it
+  # does not, use an installed model of the same family that does.
+  local model_name="${DORADO_MODEL}" data_rate
+  data_rate="$(pod5_sample_rate "${pod5_path}" "${POD5_BIN}")"
+  if [[ -n "${data_rate}" && -d "${model_dir}/${DORADO_MODEL}" ]]; then
+    model_name="$(dorado_model_for_data "${model_dir}" "${DORADO_MODEL}" "${data_rate}")"
+    if [[ -z "${model_name}" ]]; then
+      log_fail "Data is sampled at ${data_rate} Hz but ${DORADO_MODEL} expects $(dorado_model_sample_rate "${model_dir}/${DORADO_MODEL}") Hz, and no matching ${DORADO_MODEL%@*} model is installed in ${model_dir}."
+      return 2
+    elif [[ "${model_name}" != "${DORADO_MODEL}" ]]; then
+      log_warn "${DORADO_MODEL} expects $(dorado_model_sample_rate "${model_dir}/${DORADO_MODEL}") Hz but the data is ${data_rate} Hz - using ${model_name} instead."
+    fi
+  fi
+
+  # With a barcoding kit, classify barcodes during basecalling and trim nothing:
+  # basecaller trimming strips the primer flanks that demux needs to find the barcode
+  local -a kit_args=()
+  if [[ -n "${BARCODE_KIT:-}" && "${BARCODE_KIT}" != "null" ]]; then
+    kit_args=( --kit-name "${BARCODE_KIT}" --no-trim )
+    log_info "Basecalling with barcode kit ${BARCODE_KIT} (reads not trimmed; demux and trim steps follow)"
+  fi
+
   # Run basecaller with explicit model path if downloaded to custom location
-  local model_path="${model_dir}/${DORADO_MODEL}"
+  local model_path="${model_dir}/${model_name}"
   if [[ -d "${model_path}" ]]; then
     log_info "Using downloaded model at: ${model_path}"
-    "${DORADO_BIN}" basecaller --device cpu "${model_path}" "${pod5_path}" > "${outbam}"
+    "${DORADO_BIN}" basecaller --device cpu ${kit_args[@]+"${kit_args[@]}"} "${model_path}" "${pod5_path}" > "${outbam}" || { rm -f "${outbam}"; return 1; }
   else
     # Fall back to model name (Dorado will use default cache)
-    "${DORADO_BIN}" basecaller --device cpu "${DORADO_MODEL}" "${pod5_path}" > "${outbam}"
+    "${DORADO_BIN}" basecaller --device cpu ${kit_args[@]+"${kit_args[@]}"} "${model_name}" "${pod5_path}" > "${outbam}" || { rm -f "${outbam}"; return 1; }
   fi
+  [[ -s "${outbam}" ]] || { log_fail "Dorado basecaller produced no reads: ${outbam}"; rm -f "${outbam}"; return 1; }
   echo "${outbam}"
 }
 
@@ -918,6 +972,7 @@ dorado_demux_to_per_barcode_bam() {
   check_cmd "${DORADO_BIN}"
   local inbam="$1"
   local outdir="${DEMUX_DIR}/${RUN_NAME}"
+  [[ "${RESUME_ACTIVE}" == "1" ]] && rm -rf "${outdir}"
   make_dir "${outdir}"
 
   if [[ -z "${BARCODE_KIT:-}" || "${BARCODE_KIT}" == "null" ]]; then
@@ -950,10 +1005,16 @@ dorado_trim_bam_to_fastq_per_barcode() {
   local any=0
   for bbam in "${demux_dir}"/*.bam "${demux_dir}"/*/*.bam; do
     [[ -e "${bbam}" ]] || continue
-    any=1
 
     local barcode
     barcode="$(basename "${bbam}" .bam)"
+    # Reads Dorado could not assign to a barcode stay in the demux folder only:
+    # every later step (QC, filtering, human removal, taxonomy) uses barcoded reads.
+    if is_unbarcoded_bin "${barcode}"; then
+      log_info "Leaving out ${barcode} (reads with no barcode): kept at ${bbam}, not processed further"
+      continue
+    fi
+    any=1
 
     local trimmed_bam="${TRIM_DIR}/${RUN_NAME}_${barcode}_trimmed.bam"
     # Note: dorado trim auto-detects adapters/primers. Custom primers can be provided via --primer-sequences.
@@ -973,7 +1034,7 @@ dorado_trim_bam_to_fastq_per_barcode() {
     "${SAMTOOLS_BIN}" bam2fq "${trimmed_bam}" > "${fq}"
   done
 
-  [[ "${any}" -eq 1 ]] || die "No demux BAMs found under ${demux_dir}"
+  [[ "${any}" -eq 1 ]] || die "No barcoded demux BAMs found under ${demux_dir} (only reads with no barcode)"
   echo "${RAW_READS_DIR}/${RUN_NAME}"
 }
 
@@ -1068,9 +1129,20 @@ human_depletion_per_barcode() {
   local files=( "${PER_BARCODE_FASTQ_ROOT}"/*/*.fastq "${PER_BARCODE_FASTQ_ROOT}"/*/*.fq "${PER_BARCODE_FASTQ_ROOT}"/*/*.fastq.gz "${PER_BARCODE_FASTQ_ROOT}"/*/*.fq.gz )
   [[ ${#files[@]} -gt 0 ]] || die "No FASTQ files found in ${PER_BARCODE_FASTQ_ROOT} for human depletion"
 
+  # A multi-part index needs --split-prefix whatever the config says
+  if [[ "${MINIMAP2_SPLIT_PREFIX}" != "1" ]] && minimap2_index_is_multipart "${MINIMAP2_BIN}" "${idx}"; then
+    log_warn "Human index ${idx} is multi-part - enabling minimap2 --split-prefix"
+    MINIMAP2_SPLIT_PREFIX="1"
+  fi
+
   for fq in "${files[@]}"; do
     local barcode
     barcode="$(basename "$(dirname "${fq}")")"
+
+    if resume_sample_done host_depletion "${barcode}"; then
+      log_info "Resume: human depletion already done for ${barcode}"
+      continue
+    fi
 
     make_dir "${ALN_DIR}/${RUN_NAME_BASE}/${barcode}"
     make_dir "${NONHUMAN_DIR}/${RUN_NAME_BASE}/${barcode}"
@@ -1093,13 +1165,18 @@ human_depletion_per_barcode() {
       "${MINIMAP2_BIN}" -t "${THREADS}" -ax map-ont --secondary=no "${idx}" "${fq}" \
         | "${SAMTOOLS_BIN}" sort -@ "${SAMTOOLS_THREADS}" -o "${bam}"
     fi
-    "${SAMTOOLS_BIN}" index "${bam}"
+    if [[ ! -s "${bam}" ]]; then
+      log_warn "Human depletion failed for ${barcode}: minimap2 | samtools sort produced no BAM (see messages above)"
+      return 1
+    fi
+    "${SAMTOOLS_BIN}" index "${bam}" || return 1
 
-    "${SAMTOOLS_BIN}" view -@ "${SAMTOOLS_THREADS}" -b -f 4 "${bam}" > "${unmapped}"
-    "${SAMTOOLS_BIN}" sort -n -@ "${SAMTOOLS_THREADS}" -o "${nonhuman_name}" "${unmapped}"
-    "${SAMTOOLS_BIN}" fastq -@ "${SAMTOOLS_THREADS}" "${nonhuman_name}" | gzip -c > "${nonhuman_fq}"
+    "${SAMTOOLS_BIN}" view -@ "${SAMTOOLS_THREADS}" -b -f 4 "${bam}" > "${unmapped}" || return 1
+    "${SAMTOOLS_BIN}" sort -n -@ "${SAMTOOLS_THREADS}" -o "${nonhuman_name}" "${unmapped}" || return 1
+    "${SAMTOOLS_BIN}" fastq -@ "${SAMTOOLS_THREADS}" "${nonhuman_name}" | gzip -c > "${nonhuman_fq}" || return 1
 
     "${SAMTOOLS_BIN}" flagstat "${bam}" > "${ALN_DIR}/${RUN_NAME_BASE}/${barcode}/${barcode}.flagstat.txt"
+    resume_mark_sample host_depletion "${barcode}"
   done
 
   NONHUMAN_RUN_DIR="${NONHUMAN_DIR}/${RUN_NAME_BASE}"
@@ -1111,13 +1188,14 @@ human_depletion_per_barcode() {
 ############################################
 
 taxonomy_per_barcode_fixed_params() {
-  # Check if kraken2 db is configured - skip taxonomy if not
-  if [[ -z "${KRAKEN2_DB}" || "${KRAKEN2_DB}" == "null" ]]; then
+  # Check if a kraken2 db is configured (global or per-site) - skip taxonomy if not
+  if [[ ( -z "${KRAKEN2_DB}" || "${KRAKEN2_DB}" == "null" ) && ${#DB_BY_SITE[@]} -eq 0 ]]; then
     log_warn "KRAKEN2_DB not set - skipping taxonomy step. Set tools.kraken2.db to enable."
     return 0
   fi
+  [[ "${KRAKEN2_DB}" == "null" ]] && KRAKEN2_DB=""
 
-  if [[ ! -d "${KRAKEN2_DB}" ]]; then
+  if [[ -n "${KRAKEN2_DB}" && ! -d "${KRAKEN2_DB}" && ${#DB_BY_SITE[@]} -eq 0 ]]; then
     log_warn "KRAKEN2_DB directory not found: ${KRAKEN2_DB} - skipping taxonomy step."
     return 0
   fi
@@ -1128,6 +1206,10 @@ taxonomy_per_barcode_fixed_params() {
     return 0
   fi
 
+  # Bracken enable flags as configured, before check_bracken_available narrows them
+  # to what the global DB supports (per-site DBs are checked per sample below).
+  local use_bracken_vag_cfg="${USE_BRACKEN_VAGINAL}"
+  local use_bracken_nonvag_cfg="${USE_BRACKEN_NONVAGINAL}"
   check_bracken_available
   [[ -n "${NONHUMAN_RUN_DIR}" ]] || die "nonhuman_run_dir is not set (human depletion must run first)"
 
@@ -1137,40 +1219,93 @@ taxonomy_per_barcode_fixed_params() {
   local nfqs=( "${NONHUMAN_RUN_DIR}"/*/nonhuman.fastq.gz )
   [[ ${#nfqs[@]} -gt 0 ]] || die "No nonhuman.fastq.gz found under ${NONHUMAN_RUN_DIR}"
 
+  # Resolve every sample's site + DB up front so a missing per-site DB fails
+  # before any classification starts, then process samples grouped by DB.
+  local nfq sample_id site db
+  local -a ordered=() all_ids=() missing=()
   for nfq in "${nfqs[@]}"; do
-    local sample_id
     sample_id="$(basename "$(dirname "${nfq}")")"
+    # Reads with no barcode are not a sample (normally dropped after demux; this
+    # also covers resuming a run made before that)
+    if is_unbarcoded_bin "${sample_id}"; then
+      log_info "Leaving out ${sample_id} (reads with no barcode)"
+      continue
+    fi
+    site="$(get_site_for_barcode "${sample_id}")"
+    db="$(site_db_for "${site}" "${KRAKEN2_DB}")"
+    all_ids+=( "${sample_id}" )
+    if [[ -z "${db}" || ! -d "${db}" ]]; then
+      missing+=( "${sample_id} (site=${site}, db=${db:-<none>})" )
+    fi
+    ordered+=( "${db}"$'\t'"${nfq}" )
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    log_fail "No usable Kraken2 database for ${#missing[@]} sample(s):"
+    local m
+    for m in "${missing[@]}"; do log_fail "  - ${m}"; done
+    die "Set tools.kraken2.db_by_site.<site> (or tools.kraken2.db as a fallback) for every site in the run."
+  fi
+  site_write_samples_tsv "${SAMPLE_SITES_TSV}" "${SAMPLE_TYPE_NORM:-unknown}" "${all_ids[@]}"
+
+  local entry
+  local -a sorted=()
+  mapfile -t sorted < <(printf '%s\n' "${ordered[@]}" | sort -t $'\t' -k1,1 -s)
+  for entry in "${sorted[@]}"; do
+    [[ -n "${entry}" ]] || continue
+    db="${entry%%$'\t'*}"
+    nfq="${entry#*$'\t'}"
+    sample_id="$(basename "$(dirname "${nfq}")")"
+    site="$(get_site_for_barcode "${sample_id}")"
     local friendly
     friendly="$(get_name_for_barcode "${sample_id}")"
+
+    if resume_sample_done taxonomy "${sample_id}"; then
+      log_info "Resume: Kraken2 already done for ${sample_id}"
+      continue
+    fi
 
     make_dir "${TAXO_ROOT}/${RUN_NAME}/${sample_id}"
     local bout="${TAXO_ROOT}/${RUN_NAME}/${sample_id}"
 
-    local conf mhg do_bracken br_readlen
+    local conf mhg do_bracken br_readlen br_pref use_cfg use_eff
     do_bracken=0
     br_readlen=""
 
     if is_vaginal_barcode "${sample_id}"; then
       conf="${KRAKEN_CONF_VAGINAL}"
       mhg="${KRAKEN_MHG_VAGINAL}"
-      br_readlen="${BRACKEN_READLEN_VAGINAL}"
+      br_pref="${BRACKEN_READLEN_VAGINAL}"
+      use_cfg="${use_bracken_vag_cfg}"; use_eff="${USE_BRACKEN_VAGINAL}"
       log_info "Sample ${sample_id} (${friendly}) flagged as vaginal."
-      if [[ "${BRACKEN_AVAILABLE}" -eq 1 && "${USE_BRACKEN_VAGINAL}" -eq 1 ]]; then
-        do_bracken=1
-      fi
     else
       conf="${KRAKEN_CONF_NONVAGINAL}"
       mhg="${KRAKEN_MHG_NONVAGINAL}"
-      log_info "Sample ${sample_id} (${friendly}) treated as non-vaginal ($(get_site_for_barcode "${sample_id}")${SITE_BY_BARCODE[${sample_id}]:+})."
-      if [[ "${BRACKEN_AVAILABLE}" -eq 1 && "${USE_BRACKEN_NONVAGINAL}" -eq 1 ]]; then
+      br_pref="${BRACKEN_READLEN_NONVAGINAL}"
+      use_cfg="${use_bracken_nonvag_cfg}"; use_eff="${USE_BRACKEN_NONVAGINAL}"
+      log_info "Sample ${sample_id} (${friendly}) treated as non-vaginal (${site})."
+    fi
+    # Per-site overrides (mixed-site runs)
+    [[ -n "${CONF_BY_SITE[${site}]:-}" ]] && conf="${CONF_BY_SITE[${site}]}"
+    [[ -n "${MHG_BY_SITE[${site}]:-}" ]] && mhg="${MHG_BY_SITE[${site}]}"
+
+    if [[ "${db}" == "${KRAKEN2_DB}" && -z "${BRACKEN_READLEN_BY_SITE[${site}]:-}" && "${br_pref}" != "auto" ]]; then
+      # Single-DB path: unchanged behaviour (flags already validated against KRAKEN2_DB)
+      if [[ "${BRACKEN_AVAILABLE}" -eq 1 && "${use_eff}" -eq 1 ]]; then
         do_bracken=1
-        br_readlen="${BRACKEN_READLEN_NONVAGINAL}"
+        br_readlen="${br_pref}"
+      fi
+    elif [[ "${BRACKEN_AVAILABLE}" -eq 1 && "${use_cfg}" -eq 1 ]]; then
+      br_readlen="$(site_pick_bracken_readlen "${db}" "${BRACKEN_READLEN_BY_SITE[${site}]:-${br_pref}}")"
+      if [[ -n "${br_readlen}" ]]; then
+        do_bracken=1
+      else
+        log_warn "No Bracken kmer_distrib in ${db} - skipping Bracken for ${sample_id}."
       fi
     fi
 
-    log "Kraken2 (${sample_id}) --confidence ${conf}, --minimum-hit-groups ${mhg}"
+    log "Kraken2 (${sample_id}, site=${site}) --db ${db} --confidence ${conf}, --minimum-hit-groups ${mhg}"
     "${KRAKEN2_BIN}" \
-      --db "${KRAKEN2_DB}" \
+      --db "${db}" \
       --threads "${THREADS}" \
       --memory-mapping \
       --use-names \
@@ -1197,7 +1332,7 @@ taxonomy_per_barcode_fixed_params() {
     if [[ "${do_bracken}" -eq 1 ]]; then
       log "Bracken (${sample_id}), readlen=${br_readlen}"
       "${BRACKEN_BIN}" \
-        -d "${KRAKEN2_DB}" \
+        -d "${db}" \
         -i "${bout}/${sample_id}.kreport" \
         -o "${bout}/${sample_id}.bracken" \
         -w "${bout}/${sample_id}.breport" \
@@ -1206,7 +1341,76 @@ taxonomy_per_barcode_fixed_params() {
     else
       log "Skipping Bracken for ${sample_id} (${friendly})."
     fi
+    resume_mark_sample taxonomy "${sample_id}"
   done
+}
+
+############################################
+##   COMPARISON DB (common DB, all sites) ##
+############################################
+# Optional second classification of EVERY sample against one shared database
+# with one parameter set. Site-specific DBs give the best within-site results,
+# but differences between sites are then confounded with database differences;
+# the comparison DB output is what between-site comparisons should use.
+
+taxonomy_comparison_db() {
+  if [[ -z "${COMPARISON_DB}" ]]; then
+    local started ended
+    started="$(iso_now)"; ended="$(iso_now)"
+    steps_append "${STEPS_JSON}" "taxonomy_comparison_db" "skipped" "No comparison database configured (tools.kraken2.comparison_db)" "" "" "0" "${started}" "${ended}"
+    return 0
+  fi
+  if [[ ! -d "${COMPARISON_DB}" ]]; then
+    log_fail "Comparison Kraken2 DB not found: ${COMPARISON_DB}"
+    return 2
+  fi
+  command -v "${KRAKEN2_BIN}" >/dev/null 2>&1 || { log_warn "Kraken2 not found - skipping comparison DB."; return 0; }
+  [[ -n "${NONHUMAN_RUN_DIR}" ]] || { log_warn "nonhuman_run_dir not set - skipping comparison DB."; return 0; }
+
+  local comp_dir="${COMPARISON_TAXO_ROOT}/${RUN_NAME}"
+  make_dir "${comp_dir}"
+
+  local br_readlen=""
+  if command -v "${BRACKEN_BIN}" >/dev/null 2>&1; then
+    br_readlen="$(site_pick_bracken_readlen "${COMPARISON_DB}" "${BRACKEN_READLEN_NONVAGINAL}")"
+  fi
+
+  shopt -s nullglob
+  local nfqs=( "${NONHUMAN_RUN_DIR}"/*/nonhuman.fastq.gz )
+  shopt -u nullglob
+  local nfq sample_id bout
+  for nfq in "${nfqs[@]}"; do
+    sample_id="$(basename "$(dirname "${nfq}")")"
+    is_unbarcoded_bin "${sample_id}" && continue
+    if resume_sample_done comparison "${sample_id}"; then
+      log_info "Resume: comparison DB already done for ${sample_id}"
+      continue
+    fi
+    bout="${comp_dir}/${sample_id}"
+    make_dir "${bout}"
+    log "Kraken2 comparison DB (${sample_id}) --confidence ${COMPARISON_CONF}, --minimum-hit-groups ${COMPARISON_MHG}"
+    "${KRAKEN2_BIN}" \
+      --db "${COMPARISON_DB}" \
+      --threads "${THREADS}" \
+      --memory-mapping \
+      --use-names \
+      --confidence "${COMPARISON_CONF}" \
+      --minimum-hit-groups "${COMPARISON_MHG}" \
+      --report "${bout}/${sample_id}.kreport" \
+      --output "${bout}/${sample_id}.kraken2" \
+      "${nfq}" || return $?
+    if [[ -n "${br_readlen}" ]]; then
+      "${BRACKEN_BIN}" \
+        -d "${COMPARISON_DB}" \
+        -i "${bout}/${sample_id}.kreport" \
+        -o "${bout}/${sample_id}.bracken" \
+        -w "${bout}/${sample_id}.breport" \
+        -r "${br_readlen}" \
+        -l S || log_warn "Bracken (comparison DB) failed for ${sample_id} — using raw kreport."
+    fi
+    resume_mark_sample comparison "${sample_id}"
+  done
+  return 0
 }
 
 ############################################
@@ -1226,6 +1430,27 @@ run_valencia() {
   elif [[ "${VALENCIA_ENABLED}" == "auto" ]]; then
     if [[ "${SAMPLE_TYPE_NORM}" == "vaginal" ]]; then
       VALENCIA_SHOULD_RUN="yes"
+    fi
+  fi
+
+  # Mixed-site runs: VALENCIA only applies to vaginal samples, so restrict it to
+  # those (and skip entirely when the run has none).
+  export STAMINA_VALENCIA_SAMPLES=""
+  if [[ "${SITE_ROUTING_ACTIVE}" -eq 1 && "${VALENCIA_ENABLED}" != "false" && -d "${taxo_run_dir}" ]]; then
+    local -a vag_ids=()
+    local d id
+    shopt -s nullglob
+    for d in "${taxo_run_dir}"/*/; do
+      id="$(basename "${d}")"
+      is_vaginal_barcode "${id}" && vag_ids+=( "${id}" )
+    done
+    shopt -u nullglob
+    if [[ ${#vag_ids[@]} -gt 0 ]]; then
+      VALENCIA_SHOULD_RUN="yes"
+      STAMINA_VALENCIA_SAMPLES="$(IFS=,; echo "${vag_ids[*]}")"
+      log_info "VALENCIA restricted to vaginal samples: ${STAMINA_VALENCIA_SAMPLES}"
+    else
+      VALENCIA_SHOULD_RUN="no"
     fi
   fi
 
@@ -1363,6 +1588,11 @@ def parse_kreport(path: str):
 # Find all kreport files
 taxo_path = Path(taxo_run_dir)
 kreport_files = list(taxo_path.glob("*/*.kreport"))
+# Mixed-site runs pass the vaginal sample IDs; VALENCIA is only meaningful for those
+_valencia_only = [x for x in os.environ.get("STAMINA_VALENCIA_SAMPLES", "").split(",") if x]
+if _valencia_only:
+    kreport_files = [k for k in kreport_files if k.parent.name in _valencia_only]
+    print(f"Restricting VALENCIA to vaginal samples: {', '.join(_valencia_only)}")
 
 if not kreport_files:
     print(f"WARNING: No kreport files found in {taxo_run_dir}")
@@ -1748,6 +1978,9 @@ run_postprocess() {
   local final_dir="${MODULE_OUT_DIR}/final"
   mkdir -p "${postprocess_dir}" "${final_dir}" "${final_dir}/plots" "${final_dir}/tables" "${LOGS_DIR}"
 
+  STAMINA_SAMPLE_SITES_TSV="${SAMPLE_SITES_TSV}" \
+  STAMINA_SITE_ROUTING_ACTIVE="${SITE_ROUTING_ACTIVE}" \
+  STAMINA_COMPARISON_DIR="$( [[ -n "${COMPARISON_DB}" ]] && echo "${COMPARISON_TAXO_ROOT}/${RUN_NAME}" )" \
   python3 - "${taxo_run_dir}" "${postprocess_dir}" "${final_dir}" "${VALENCIA_RESULTS}" "${postprocess_log}" "${RUN_NAME}" <<'PY'
 import os
 import sys
@@ -1808,7 +2041,11 @@ def parse_kreport(path):
     return rows_by_rank, total_reads
 
 # Find all kraken reports in per-barcode directories
-reports = list(taxo_run_dir.glob("*/*.kreport"))
+import re as _re
+def _natural_key(name):
+    # barcode2 before barcode10; samples listed in a stable, readable order
+    return [int(t) if t.isdigit() else t.lower() for t in _re.split(r"(\d+)", name)]
+reports = sorted(taxo_run_dir.glob("*/*.kreport"), key=lambda p: _natural_key(p.parent.name))
 if not reports:
     log("[postprocess] No kraken2 reports found, skipping summarization")
     sys.exit(0)
@@ -1850,10 +2087,27 @@ for report_path in reports:
             "fraction": frac
         })
 
+# Per-sample sites (mixed-site runs add a `site` column to the tidy tables)
+sample_sites = {}
+sites_tsv = Path(os.environ.get("STAMINA_SAMPLE_SITES_TSV", "") or "/nonexistent")
+if sites_tsv.is_file():
+    with open(sites_tsv, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            if row.get("sample_id"):
+                sample_sites[row["sample_id"]] = row.get("site") or ""
+site_routing_active = os.environ.get("STAMINA_SITE_ROUTING_ACTIVE", "0") == "1" and bool(sample_sites)
+if site_routing_active:
+    for r in all_species + all_genus:
+        r["site"] = sample_sites.get(r["sample_id"], "")
+    log(f"[postprocess] Mixed-site run: added site column ({len(set(sample_sites.values()))} sites)")
+
 # Write tidy CSVs
-def write_tidy_csv(path, rows, taxon_col):
+def write_tidy_csv(path, rows, taxon_col, with_site=None):
+    if with_site is None:
+        with_site = site_routing_active
+    fields = ["sample_id", "taxid", taxon_col, "reads", "fraction"] + (["site"] if with_site else [])
     with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["sample_id", "taxid", taxon_col, "reads", "fraction"])
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             w.writerow(r)
@@ -1893,6 +2147,42 @@ if species_tidy.exists():
     shutil.copy2(species_tidy, final_dir / "tables" / "kraken_species_tidy.csv")
 if genus_tidy.exists():
     shutil.copy2(genus_tidy, final_dir / "tables" / "kraken_genus_tidy.csv")
+if sites_tsv.is_file():
+    shutil.copy2(sites_tsv, final_dir / "tables" / "sample_sites.tsv")
+
+# Comparison DB: every sample against one shared DB (for between-site comparisons)
+comparison_dir = os.environ.get("STAMINA_COMPARISON_DIR", "")
+if comparison_dir and Path(comparison_dir).is_dir():
+    comp_reports = sorted(Path(comparison_dir).glob("*/*.kreport"))
+    comp_species, comp_genus = [], []
+    comp_final = final_dir / "tables" / "comparison_db"
+    comp_final.mkdir(parents=True, exist_ok=True)
+    for report_path in comp_reports:
+        sid = report_path.parent.name
+        src = report_path
+        b = report_path.parent / f"{sid}.breport"
+        if b.exists() and b.stat().st_size > 0:
+            src = b
+            shutil.copy2(b, comp_final / f"{sid}_{b.name}")
+        shutil.copy2(report_path, comp_final / f"{sid}_{report_path.name}")
+        rows_by_rank, total_reads = parse_kreport(src)
+        for rank, bucket, col in (("S", comp_species, "species"), ("G", comp_genus, "genus")):
+            for row in rows_by_rank.get(rank, []):
+                bucket.append({
+                    "sample_id": sid,
+                    "taxid": row["taxid"],
+                    col: row["name"],
+                    "reads": row["clade_reads"],
+                    "fraction": row["clade_reads"] / total_reads if total_reads > 0 else 0,
+                    "site": sample_sites.get(sid, ""),
+                })
+    for rows, col, name in ((comp_species, "species", "comparison_db_species_tidy.csv"),
+                            (comp_genus, "genus", "comparison_db_genus_tidy.csv")):
+        if rows:
+            write_tidy_csv(postprocess_dir / name, rows, col, with_site=True)
+            shutil.copy2(postprocess_dir / name, final_dir / "tables" / name)
+            log(f"[postprocess] Wrote comparison DB table: {name}")
+    log(f"[postprocess] Comparison DB: {len(comp_reports)} report(s) summarised")
 
 # Copy VALENCIA outputs if they exist
 valencia_path = Path(valencia_dir)
@@ -1946,60 +2236,72 @@ main() {
     # Step tracking handled manually below since we need to capture function output:
     local started ended ec msg
 
-    started="$(iso_now)"
-    log_info "FAST5 -> POD5"
-    set +e
-    pod5_path="$(convert_fast5_to_pod5)"
-    ec=$?
-    set -e
-    ended="$(iso_now)"
-    if [[ $ec -eq 0 ]]; then
-      steps_append "${STEPS_JSON}" "pod5" "succeeded" "pod5 conversion completed" "${POD5_BIN}" "${POD5_BIN} convert fast5 ..." "${ec}" "${started}" "${ended}"
-    else
-      steps_append "${STEPS_JSON}" "pod5" "failed" "pod5 conversion failed" "${POD5_BIN}" "${POD5_BIN} convert fast5 ..." "${ec}" "${started}" "${ended}"
-      exit $ec
+    if ! resume_step_done pod5; then
+      started="$(iso_now)"
+      log_info "FAST5 -> POD5"
+      set +e
+      pod5_path="$(convert_fast5_to_pod5)"
+      ec=$?
+      set -e
+      ended="$(iso_now)"
+      if [[ $ec -eq 0 ]]; then
+        steps_append "${STEPS_JSON}" "pod5" "succeeded" "pod5 conversion completed" "${POD5_BIN}" "${POD5_BIN} convert fast5 ..." "${ec}" "${started}" "${ended}"
+      else
+        steps_append "${STEPS_JSON}" "pod5" "failed" "pod5 conversion failed" "${POD5_BIN}" "${POD5_BIN} convert fast5 ..." "${ec}" "${started}" "${ended}"
+        exit $ec
+      fi
+      resume_mark_step pod5 pod5_path
     fi
 
-    started="$(iso_now)"
-    log_info "Dorado basecalling -> BAM"
-    set +e
-    bam_path="$(dorado_basecall_to_bam "${pod5_path}")"
-    ec=$?
-    set -e
-    ended="$(iso_now)"
-    if [[ $ec -eq 0 ]]; then
-      steps_append "${STEPS_JSON}" "dorado_basecall" "succeeded" "dorado basecall completed" "${DORADO_BIN}" "${DORADO_BIN} basecaller ..." "${ec}" "${started}" "${ended}"
-    else
-      steps_append "${STEPS_JSON}" "dorado_basecall" "failed" "dorado basecall failed" "${DORADO_BIN}" "${DORADO_BIN} basecaller ..." "${ec}" "${started}" "${ended}"
-      exit $ec
+    if ! resume_step_done dorado_basecall; then
+      started="$(iso_now)"
+      log_info "Dorado basecalling -> BAM"
+      set +e
+      bam_path="$(dorado_basecall_to_bam "${pod5_path}")"
+      ec=$?
+      set -e
+      ended="$(iso_now)"
+      if [[ $ec -eq 0 ]]; then
+        steps_append "${STEPS_JSON}" "dorado_basecall" "succeeded" "dorado basecall completed" "${DORADO_BIN}" "${DORADO_BIN} basecaller ..." "${ec}" "${started}" "${ended}"
+      else
+        steps_append "${STEPS_JSON}" "dorado_basecall" "failed" "dorado basecall failed" "${DORADO_BIN}" "${DORADO_BIN} basecaller ..." "${ec}" "${started}" "${ended}"
+        exit $ec
+      fi
+      resume_mark_step dorado_basecall bam_path
     fi
 
-    started="$(iso_now)"
-    log_info "Dorado demux -> per-barcode BAMs"
-    set +e
-    demux_dir="$(dorado_demux_to_per_barcode_bam "${bam_path}")"
-    ec=$?
-    set -e
-    ended="$(iso_now)"
-    if [[ $ec -eq 0 ]]; then
-      steps_append "${STEPS_JSON}" "dorado_demux" "succeeded" "dorado demux completed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
-    else
-      steps_append "${STEPS_JSON}" "dorado_demux" "failed" "dorado demux failed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
-      exit $ec
+    if ! resume_step_done dorado_demux; then
+      started="$(iso_now)"
+      log_info "Dorado demux -> per-barcode BAMs"
+      set +e
+      demux_dir="$(dorado_demux_to_per_barcode_bam "${bam_path}")"
+      ec=$?
+      set -e
+      ended="$(iso_now)"
+      if [[ $ec -eq 0 ]]; then
+        steps_append "${STEPS_JSON}" "dorado_demux" "succeeded" "dorado demux completed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
+      else
+        steps_append "${STEPS_JSON}" "dorado_demux" "failed" "dorado demux failed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
+        exit $ec
+      fi
+      resume_mark_step dorado_demux demux_dir
     fi
 
-    started="$(iso_now)"
-    log_info "Dorado trim -> per-barcode FASTQ"
-    set +e
-    per_barcode_root="$(dorado_trim_bam_to_fastq_per_barcode "${demux_dir}")"
-    ec=$?
-    set -e
-    ended="$(iso_now)"
-    if [[ $ec -eq 0 ]]; then
-      steps_append "${STEPS_JSON}" "dorado_trim_fastq" "succeeded" "dorado trim + bam2fq completed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
-    else
-      steps_append "${STEPS_JSON}" "dorado_trim_fastq" "failed" "dorado trim + bam2fq failed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
-      exit $ec
+    if ! resume_step_done dorado_trim_fastq; then
+      started="$(iso_now)"
+      log_info "Dorado trim -> per-barcode FASTQ"
+      set +e
+      per_barcode_root="$(dorado_trim_bam_to_fastq_per_barcode "${demux_dir}")"
+      ec=$?
+      set -e
+      ended="$(iso_now)"
+      if [[ $ec -eq 0 ]]; then
+        steps_append "${STEPS_JSON}" "dorado_trim_fastq" "succeeded" "dorado trim + bam2fq completed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
+      else
+        steps_append "${STEPS_JSON}" "dorado_trim_fastq" "failed" "dorado trim + bam2fq failed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
+        exit $ec
+      fi
+      resume_mark_step dorado_trim_fastq per_barcode_root
     fi
 
     PER_BARCODE_FASTQ_ROOT="${per_barcode_root}"
@@ -2014,32 +2316,38 @@ main() {
 
     # If barcode kit specified, demux first
     if [[ -n "${BARCODE_KIT}" && "${BARCODE_KIT}" != "null" ]]; then
-      started="$(iso_now)"
-      log_info "Dorado demux -> per-barcode BAMs"
-      set +e
-      demux_dir="$(dorado_demux_to_per_barcode_bam "${bam_path}")"
-      ec=$?
-      set -e
-      ended="$(iso_now)"
-      if [[ $ec -eq 0 ]]; then
-        steps_append "${STEPS_JSON}" "dorado_demux" "succeeded" "dorado demux completed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
-      else
-        steps_append "${STEPS_JSON}" "dorado_demux" "failed" "dorado demux failed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
-        exit $ec
+      if ! resume_step_done dorado_demux; then
+        started="$(iso_now)"
+        log_info "Dorado demux -> per-barcode BAMs"
+        set +e
+        demux_dir="$(dorado_demux_to_per_barcode_bam "${bam_path}")"
+        ec=$?
+        set -e
+        ended="$(iso_now)"
+        if [[ $ec -eq 0 ]]; then
+          steps_append "${STEPS_JSON}" "dorado_demux" "succeeded" "dorado demux completed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
+        else
+          steps_append "${STEPS_JSON}" "dorado_demux" "failed" "dorado demux failed" "${DORADO_BIN}" "${DORADO_BIN} demux ..." "${ec}" "${started}" "${ended}"
+          exit $ec
+        fi
+        resume_mark_step dorado_demux demux_dir
       fi
 
-      started="$(iso_now)"
-      log_info "Dorado trim -> per-barcode FASTQ"
-      set +e
-      per_barcode_root="$(dorado_trim_bam_to_fastq_per_barcode "${demux_dir}")"
-      ec=$?
-      set -e
-      ended="$(iso_now)"
-      if [[ $ec -eq 0 ]]; then
-        steps_append "${STEPS_JSON}" "dorado_trim_fastq" "succeeded" "dorado trim + bam2fq completed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
-      else
-        steps_append "${STEPS_JSON}" "dorado_trim_fastq" "failed" "dorado trim + bam2fq failed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
-        exit $ec
+      if ! resume_step_done dorado_trim_fastq; then
+        started="$(iso_now)"
+        log_info "Dorado trim -> per-barcode FASTQ"
+        set +e
+        per_barcode_root="$(dorado_trim_bam_to_fastq_per_barcode "${demux_dir}")"
+        ec=$?
+        set -e
+        ended="$(iso_now)"
+        if [[ $ec -eq 0 ]]; then
+          steps_append "${STEPS_JSON}" "dorado_trim_fastq" "succeeded" "dorado trim + bam2fq completed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
+        else
+          steps_append "${STEPS_JSON}" "dorado_trim_fastq" "failed" "dorado trim + bam2fq failed" "${DORADO_BIN}" "${DORADO_BIN} trim ... + samtools bam2fq" "${ec}" "${started}" "${ended}"
+          exit $ec
+        fi
+        resume_mark_step dorado_trim_fastq per_barcode_root
       fi
 
       PER_BARCODE_FASTQ_ROOT="${per_barcode_root}"
@@ -2094,31 +2402,37 @@ main() {
     die "Unsupported input style: ${INPUT_STYLE}"
   fi
   # QC on raw per-barcode fastqs (call function directly instead of through run_step)
-  started="$(iso_now)"
-  set +e
-  qc_raw_per_barcode_fastq
-  ec=$?
-  set -e
-  ended="$(iso_now)"
-  if [[ $ec -eq 0 ]]; then
-    steps_append "${STEPS_JSON}" "raw_fastqc_multiqc" "succeeded" "raw fastqc + multiqc completed" "${FASTQC_BIN}" "fastqc + multiqc" "${ec}" "${started}" "${ended}"
-  else
-    steps_append "${STEPS_JSON}" "raw_fastqc_multiqc" "skipped" "raw fastqc + multiqc skipped (error or tool missing)" "${FASTQC_BIN}" "fastqc + multiqc" "${ec}" "${started}" "${ended}"
-    log_warn "FastQC/MultiQC step had issues (ec=$ec), continuing..."
+  if ! resume_step_done raw_fastqc_multiqc; then
+    started="$(iso_now)"
+    set +e
+    qc_raw_per_barcode_fastq
+    ec=$?
+    set -e
+    ended="$(iso_now)"
+    if [[ $ec -eq 0 ]]; then
+      steps_append "${STEPS_JSON}" "raw_fastqc_multiqc" "succeeded" "raw fastqc + multiqc completed" "${FASTQC_BIN}" "fastqc + multiqc" "${ec}" "${started}" "${ended}"
+    else
+      steps_append "${STEPS_JSON}" "raw_fastqc_multiqc" "skipped" "raw fastqc + multiqc skipped (error or tool missing)" "${FASTQC_BIN}" "fastqc + multiqc" "${ec}" "${started}" "${ended}"
+      log_warn "FastQC/MultiQC step had issues (ec=$ec), continuing..."
+    fi
+    resume_mark_step raw_fastqc_multiqc
   fi
 
   # Q-filter (optional)
-  started="$(iso_now)"
-  set +e
-  qfilter_mean_q_per_barcode
-  ec=$?
-  set -e
-  ended="$(iso_now)"
-  if [[ $ec -eq 0 ]]; then
-    steps_append "${STEPS_JSON}" "qfilter" "succeeded" "qfilter completed or skipped" "${NANOFILT_BIN}" "NanoFilt" "${ec}" "${started}" "${ended}"
-  else
-    steps_append "${STEPS_JSON}" "qfilter" "failed" "qfilter failed" "${NANOFILT_BIN}" "NanoFilt" "${ec}" "${started}" "${ended}"
-    exit $ec
+  if ! resume_step_done qfilter; then
+    started="$(iso_now)"
+    set +e
+    qfilter_mean_q_per_barcode
+    ec=$?
+    set -e
+    ended="$(iso_now)"
+    if [[ $ec -eq 0 ]]; then
+      steps_append "${STEPS_JSON}" "qfilter" "succeeded" "qfilter completed or skipped" "${NANOFILT_BIN}" "NanoFilt" "${ec}" "${started}" "${ended}"
+    else
+      steps_append "${STEPS_JSON}" "qfilter" "failed" "qfilter failed" "${NANOFILT_BIN}" "NanoFilt" "${ec}" "${started}" "${ended}"
+      exit $ec
+    fi
+    resume_mark_step qfilter PER_BARCODE_FASTQ_ROOT
   fi
 
   # Human depletion (minimap2) — only runs if params.common.remove_host = 1/true
@@ -2171,6 +2485,24 @@ main() {
   else
     steps_append "${STEPS_JSON}" "taxonomy" "failed" "taxonomy failed" "${KRAKEN2_BIN}" "kraken2" "${ec}" "${started}" "${ended}"
     exit $ec
+  fi
+
+  # Comparison DB (optional): all samples against one shared DB, uniform params
+  if [[ -n "${COMPARISON_DB}" ]]; then
+    started="$(iso_now)"
+    set +e
+    taxonomy_comparison_db
+    ec=$?
+    set -e
+    ended="$(iso_now)"
+    if [[ $ec -eq 0 ]]; then
+      steps_append "${STEPS_JSON}" "taxonomy_comparison_db" "succeeded" "kraken2 against comparison DB completed (${COMPARISON_DB})" "${KRAKEN2_BIN}" "kraken2" "${ec}" "${started}" "${ended}"
+    else
+      steps_append "${STEPS_JSON}" "taxonomy_comparison_db" "failed" "kraken2 against comparison DB failed (non-fatal; site-DB results unaffected)" "${KRAKEN2_BIN}" "kraken2" "${ec}" "${started}" "${ended}"
+      log_warn "Comparison DB classification failed (ec=$ec) - continuing with site-DB results."
+    fi
+  else
+    taxonomy_comparison_db
   fi
 
   # VALENCIA (optional, mirroring sr_amp approach)
@@ -2232,6 +2564,9 @@ main() {
      --arg postprocess_log "${postprocess_log}" \
      --arg final_dir "${final_dir}" \
      --argjson kraken2_reports "${kraken2_reports_json}" \
+     --arg sample_sites "$( [[ -s "${SAMPLE_SITES_TSV}" ]] && echo "${SAMPLE_SITES_TSV}" )" \
+     --arg comparison_dir "$( [[ -n "${COMPARISON_DB}" && -d "${COMPARISON_TAXO_ROOT}/${RUN_NAME}" ]] && echo "${COMPARISON_TAXO_ROOT}/${RUN_NAME}" )" \
+     --arg comparison_db "${COMPARISON_DB}" \
      '. + {
         "steps_path":$steps_path,
         "results_dir":$results_dir,
@@ -2245,7 +2580,10 @@ main() {
         "nonhuman_dir":$nonhuman_dir,
         "postprocess":{"dir":$postprocess_dir, "log":$postprocess_log},
         "final_dir":$final_dir
-      }' "${OUTPUTS_JSON}" > "${tmp}"
+      }
+      + (if $sample_sites != "" then {"sample_sites_tsv":$sample_sites} else {} end)
+      + (if $comparison_dir != "" then {"comparison_db":{"db":$comparison_db, "results_dir":$comparison_dir}} else {} end)
+      ' "${OUTPUTS_JSON}" > "${tmp}"
   mv "${tmp}" "${OUTPUTS_JSON}"
 
   log_done "PIPELINE COMPLETE ✅"

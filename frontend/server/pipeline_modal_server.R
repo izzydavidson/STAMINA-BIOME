@@ -353,6 +353,10 @@ pipeline_modal_server <- function(id, shared) {
         sanitized_run_id <- gsub("^-+|-+$", "", sanitized_run_id)
 
         expected_run_dir <- file.path(output_dir, sanitized_run_id)
+        # A finished run that was moved to the user's Output Directory leaves a link
+        # here. A new run of the same name starts in outputs/ again, so drop the link
+        # (only the link: the moved run stays where it is)
+        if (nzchar(Sys.readlink(expected_run_dir))) file.remove(expected_run_dir)
         expected_run_dir_abs <- normalizePath(expected_run_dir, mustWork = FALSE)
 
         run_dir(expected_run_dir_abs)
@@ -634,37 +638,17 @@ pipeline_modal_server <- function(id, shared) {
             cat("[WARNING] In-process final/ copy failed:", e$message, "\n")
           })
 
-          # ── Additional output directory copy ──────────────────────────────
-          # If the user chose an extra output dir (SR or LR module), copy the
-          # entire run folder there.  Original in STAMINA-BIOME/outputs/ is untouched.
-          if (!is.null(shared$additional_output_dir) &&
-              nchar(trimws(shared$additional_output_dir)) > 0) {
-            tryCatch({
-              rd_val  <- run_dir()
-              extra   <- trimws(shared$additional_output_dir)
-              dest    <- file.path(extra, basename(rd_val))
-              if (!dir.exists(extra)) {
-                stop("Destination directory does not exist: ", extra)
-              }
-              # Remove stale destination so file.copy gets a clean slate
-              if (dir.exists(dest)) unlink(dest, recursive = TRUE)
-              copy_ok <- file.copy(rd_val, extra, recursive = TRUE, overwrite = TRUE)
-              if (!isTRUE(copy_ok)) {
-                stop("file.copy() returned FALSE (source: ", rd_val, ")")
-              }
-              cat("[INFO] Copied run folder to additional output:", dest, "\n")
-              showNotification(
-                paste("Run folder copied to", dest),
-                type = "message", duration = 8
-              )
-            }, error = function(e) {
-              cat("[WARNING] Additional output dir copy failed:", e$message, "\n")
-              showNotification(
-                paste("Could not copy run folder to additional output dir:", e$message),
-                type = "warning", duration = 15
-              )
-            })
-          }
+          # ── Output Directory ─────────────────────────────────────────────
+          # run_with_postprocess.sh moves the finished run folder to the Output
+          # Directory chosen in the form (config run.final_dir) and leaves a link in
+          # outputs/, so there is one copy, where the user wants it.
+          tryCatch({
+            moved_to <- Sys.readlink(run_dir())
+            if (nzchar(moved_to)) {
+              cat("[INFO] Run folder saved to:", moved_to, "\n")
+              showNotification(paste("Run folder saved to", moved_to), type = "message", duration = 10)
+            }
+          }, error = function(e) NULL)
 
           sample_ok <- TRUE
           cat("[INFO] Pipeline complete\n")
@@ -830,6 +814,23 @@ pipeline_modal_server <- function(id, shared) {
 
         tryCatch({
           proc$kill_tree()
+          # kill_tree ends the launcher scripts but not the Docker container they
+          # started, so stop that too: otherwise the analysis keeps running and a
+          # rerun of the same run would share its folder with it.
+          tryCatch({
+            rd <- run_dir()
+            cn_file <- if (!is.null(rd)) file.path(rd, "container_name.txt") else ""
+            docker_bin <- c(Sys.which("docker"), "/usr/local/bin/docker", "/opt/homebrew/bin/docker",
+                            "/Applications/Docker.app/Contents/Resources/bin/docker")
+            docker_bin <- docker_bin[nzchar(docker_bin) & file.exists(docker_bin)][1]
+            if (nzchar(cn_file) && file.exists(cn_file) && !is.na(docker_bin)) {
+              cn <- trimws(readLines(cn_file, n = 1, warn = FALSE))
+              if (length(cn) == 1 && nzchar(cn)) {
+                processx::run(docker_bin, c("kill", cn), error_on_status = FALSE, timeout = 30)
+                cat("[DEBUG] Stopped container", cn, "\n")
+              }
+            }
+          }, error = function(e) cat("[WARN] Could not stop the run's container:", e$message, "\n"))
           shared$run_status <- "cancelled"
           pipeline_process(NULL)
           # Stop the batch here — don't auto-advance to the next queued sample,

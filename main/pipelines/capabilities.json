@@ -38,7 +38,7 @@
       "supported_platforms": ["ONT", "PACBIO"],
       "supported_inputs": ["FAST5_DIR", "FAST5_ARCHIVE", "FASTQ_SINGLE", "FASTQ_DIR_SINGLE"],
       "optional_config": {
-        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+        "specimen": ["vaginal", "gut", "oral", "skin", "other", "mixed"]
       },
       "outputs": [
         "logs/pipeline.log",
@@ -54,7 +54,7 @@
       "supported_platforms": ["ONT", "PACBIO"],
       "supported_inputs": ["FAST5_DIR", "FAST5_ARCHIVE", "FASTQ_SINGLE", "FASTQ_DIR_SINGLE"],
       "optional_config": {
-        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+        "specimen": ["vaginal", "gut", "oral", "skin", "other", "mixed"]
       },
       "outputs": [
         "logs/pipeline.log",
@@ -70,7 +70,7 @@
       "supported_platforms": ["ILLUMINA", "BGI", "IONTORRENT"],
       "supported_inputs": ["FASTQ_SINGLE", "FASTQ_PAIRED", "FASTQ_DIR_SINGLE", "FASTQ_DIR_PAIRED"],
       "optional_config": {
-        "specimen": ["vaginal", "gut", "oral", "skin", "other"]
+        "specimen": ["vaginal", "gut", "oral", "skin", "other", "mixed"]
       },
       "outputs": [
         "logs/pipeline.log",
@@ -86,7 +86,7 @@
       "supported_platforms": ["ILLUMINA", "BGI", "IONTORRENT"],
       "supported_inputs": ["FASTQ_SINGLE", "FASTQ_PAIRED", "FASTQ_DIR_SINGLE", "FASTQ_DIR_PAIRED"],
       "optional_config": {
-        "specimen": ["vaginal", "gut", "oral", "skin", "other"],
+        "specimen": ["vaginal", "gut", "oral", "skin", "other", "mixed"],
         "valencia.mode": ["auto", "on", "off"]
       },
       "outputs": [
